@@ -1,0 +1,1020 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="ForgeTrack">
+  <meta name="theme-color" content="#0B0B0B">
+  <title>ForgeTrack</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="apple-touch-icon" href="icon.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Rajdhani:wght@400;600;700&display=swap" rel="stylesheet">
+  <script src="https://alcdn.msauth.net/browser/2.38.3/js/msal-browser.min.js"></script>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { background: #0B0B0B; height: 100%; overflow: hidden; -webkit-tap-highlight-color: transparent; }
+    #root { height: 100vh; height: 100dvh; overflow: hidden; }
+    ::-webkit-scrollbar { display: none; }
+    input[type=number] { -moz-appearance: textfield; }
+    input[type=number]::-webkit-outer-spin-button,
+    input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; }
+    input[type=time] { color-scheme: dark; }
+    button { -webkit-tap-highlight-color: transparent; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel" data-presets="react">
+
+// ============================================================
+// MSAL / AUTH CONFIG
+// ============================================================
+const CLIENT_ID  = "36e274f3-5442-426e-a11a-c434233498b9";
+const TENANT_ID  = "a354f297-017d-4682-9285-77f29c7336db";
+const SCOPES     = ["User.Read", "Calendars.ReadWrite", "Files.ReadWrite.All"];
+const GRAPH_ROOT = "https://graph.microsoft.com/v1.0";
+const DATA_PATH  = `${GRAPH_ROOT}/me/drive/special/approot:/forgetrack-data.json:/content`;
+
+const msalConfig = {
+  auth: {
+    clientId: CLIENT_ID,
+    authority: `https://login.microsoftonline.com/${TENANT_ID}`,
+    redirectUri: window.location.origin + window.location.pathname.replace(/\/$/, "") + "/",
+  },
+  cache: { cacheLocation: "localStorage", storeAuthStateInCookie: true },
+};
+
+const msal = new msal.PublicClientApplication(msalConfig);
+
+async function getToken() {
+  const accounts = msal.getAllAccounts();
+  if (!accounts.length) throw new Error("Not signed in");
+  try {
+    const r = await msal.acquireTokenSilent({ scopes: SCOPES, account: accounts[0] });
+    return r.accessToken;
+  } catch {
+    await msal.acquireTokenRedirect({ scopes: SCOPES });
+  }
+}
+
+async function graphFetch(url, opts = {}) {
+  const token = await getToken();
+  return fetch(url.startsWith("http") ? url : `${GRAPH_ROOT}${url}`, {
+    ...opts,
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json", ...(opts.headers || {}) },
+  });
+}
+
+// ============================================================
+// ONEDRIVE STORAGE
+// ============================================================
+async function loadFromOneDrive() {
+  try {
+    const res = await graphFetch(DATA_PATH, { headers: { "Content-Type": undefined } });
+    if (res.status === 404) return { ...DEFAULT_DATA };
+    if (!res.ok) throw new Error("Load failed");
+    return res.json();
+  } catch {
+    return { ...DEFAULT_DATA };
+  }
+}
+
+let saveTimer = null;
+async function saveToOneDrive(data) {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(async () => {
+    try {
+      await graphFetch(DATA_PATH, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+      });
+    } catch (e) { console.warn("Save failed:", e); }
+  }, 1500);
+}
+
+// ============================================================
+// OUTLOOK CALENDAR
+// ============================================================
+const WIN_TIMES   = { morning: [5, 0], office: [15, 30], evening: [20, 30] };
+const WIN_LABELS  = { morning: "Morning (~5:00 AM)", office: "Office (~3:30 PM)", evening: "Evening (~8:30 PM)" };
+const GRAPH_DAYS  = ["sunday","monday","tuesday","wednesday","thursday","friday","saturday"];
+const DAYS_FULL   = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
+const DAYS_SHORT  = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+
+async function createOutlookEvents(days, timeWindow) {
+  const [hour, minute] = WIN_TIMES[timeWindow];
+  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const pad = n => String(n).padStart(2, "0");
+
+  const promises = days.map(dayIdx => {
+    const today = new Date();
+    const diff  = ((dayIdx - today.getDay() + 7) % 7) || 7;
+    const d     = new Date(today);
+    d.setDate(today.getDate() + diff);
+    const dateStr  = `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+    const startStr = `${dateStr}T${pad(hour)}:${pad(minute)}:00`;
+    const endStr   = `${dateStr}T${pad(hour+1)}:${pad(minute)}:00`;
+
+    return graphFetch("/me/events", {
+      method: "POST",
+      body: JSON.stringify({
+        subject: "ForgeTrack — Workout 💪",
+        body: { contentType: "text", content: "Home gym session.\n\nStay consistent — Logan and Rowan are counting on you.\n\nPowered by ForgeTrack." },
+        start: { dateTime: startStr, timeZone: tz },
+        end:   { dateTime: endStr,   timeZone: tz },
+        recurrence: {
+          pattern: { type: "weekly", interval: 1, daysOfWeek: [GRAPH_DAYS[dayIdx]] },
+          range:   { type: "noEnd", startDate: dateStr },
+        },
+        reminderMinutesBeforeStart: 30,
+        isReminderOn: true,
+        categories: ["ForgeTrack"],
+      }),
+    });
+  });
+
+  const results = await Promise.allSettled(promises);
+  const failed  = results.filter(r => r.status === "rejected" || (r.value && !r.value.ok));
+  if (failed.length) throw new Error(`${failed.length} event(s) failed to create`);
+}
+
+// ============================================================
+// APP THEME & CONSTANTS
+// ============================================================
+const C = {
+  bg:"#0B0B0B", card:"#161616", surface:"#202020",
+  orange:"#FF5200", gold:"#FFB700", teal:"#00CCA3",
+  red:"#FF2200", purple:"#9B6BFF", blue:"#3B8BFF",
+  text:"#EAEAEA", muted:"#5A5A5A", border:"#252525",
+};
+
+const WEEKLY_GOAL = 3;
+const WATER_GOAL  = 8;
+
+const COACH_LINES = [
+  { line:"Logan and Rowan need a present dad, not a perfect one. Show. Up.", tag:"FAMILY" },
+  { line:"Ariel bought you accountability. Don't waste the investment.", tag:"ACCOUNTABILITY" },
+  { line:"5AM belongs to you and nobody's competing for it except your excuses.", tag:"MORNING" },
+  { line:"Not tired. Comfortable. Those are not the same problem.", tag:"MINDSET" },
+  { line:"Your future self is watching this exact moment. What does he see?", tag:"VISION" },
+  { line:"Three workouts. 180 minutes. You spend more than that scrolling.", tag:"REALITY" },
+  { line:"Brixton's leash is by the door. So is your accountability.", tag:"MORNING" },
+  { line:"Consistency beats intensity every time. Show up average. Just show up.", tag:"CONSISTENCY" },
+  { line:"Rowan's first steps. Logan's first pitch. Be there — healthy.", tag:"FAMILY" },
+  { line:"The version of you Ariel married is still in there. Go excavate him.", tag:"ACCOUNTABILITY" },
+  { line:"Three for three. That's all it takes. No more excuses.", tag:"REALITY" },
+  { line:"Sleep, water, sweat. Master the basics. Everything else is noise.", tag:"MINDSET" },
+];
+
+const WL = {
+  morning:[
+    { id:"kb-destroyer",  name:"KB Destroyer",     type:"hiit",        energyMin:4,             duration:40, xp:200, desc:"High-octane kettlebell HIIT. You'll feel this tomorrow.", tag:"KB · PULL-UPS",   isHIIT:true,  workSec:40, restSec:20, exercises:[{name:"KB Swings",rounds:4,note:"35lb — hinge hard, snap hips"},{name:"Goblet Squats",rounds:4,note:"35lb — chest up, full depth"},{name:"Pull-Ups",rounds:3,note:"Full ROM, dead hang start"},{name:"KB Clean & Press",rounds:3,note:"35lb — explosive clean"},{name:"Burpees",rounds:3,note:"No pause between reps"}] },
+    { id:"pull-push",     name:"Pull & Push",       type:"strength",    energyMin:3,energyMax:4, duration:45, xp:175, desc:"Pull-up / bench superset. Methodical. Effective.", tag:"STRENGTH", isHIIT:false, exercises:[{name:"Pull-Ups",sets:4,reps:"Max reps"},{name:"Bench Press",sets:4,reps:"12 reps"},{name:"KB Row",sets:3,reps:"12 each side"},{name:"KB Push Press",sets:3,reps:"10 each"},{name:"Dead Hang",sets:3,reps:"30 sec"}] },
+    { id:"morning-flow",  name:"Morning Mobility",  type:"flexibility", energyMin:1,energyMax:2, duration:30, xp:100, desc:"Low energy. Still showing up. That's the whole point.", tag:"MOBILITY", isHIIT:false, exercises:[{name:"Cat-Cow",sets:3,reps:"10 breaths"},{name:"Hip 90/90",sets:2,reps:"60s each side"},{name:"Thoracic Rotation",sets:2,reps:"10 each side"},{name:"Lunge + Reach",sets:2,reps:"8 each leg"},{name:"Dead Hang",sets:3,reps:"30 sec"}] },
+    { id:"brixton-run",   name:"Brixton Run",        type:"cardio",      energyMin:3,             duration:35, xp:150, desc:"Brixton gets his miles. You get yours. Win-win.", tag:"OUTDOOR RUN", isHIIT:false, exercises:[{name:"Walk Warm-Up",sets:1,reps:"5 min"},{name:"Easy Run",sets:1,reps:"20 min"},{name:"Walk Cool-Down",sets:1,reps:"5 min"},{name:"Post-Run Stretch",sets:1,reps:"5 min"}] },
+  ],
+  office:[
+    { id:"sweat-before-5",name:"Sweat Before 5",    type:"hiit",        energyMin:3,             duration:35, xp:175, desc:"In by 3:30. Done by 4:15. Kids picked up. Hero.", tag:"BODYWEIGHT", isHIIT:true, workSec:35, restSec:18, exercises:[{name:"Jumping Jacks",rounds:3,note:"Full body warm-up"},{name:"Push-Ups",rounds:4,note:"Chest to floor, lock out"},{name:"Jump Squats",rounds:4,note:"Land soft, drive hard"},{name:"Mountain Climbers",rounds:3,note:"Hips down, fast feet"},{name:"Plank Hold",rounds:3,note:"45s — breathe through it"}] },
+    { id:"desk-detox",    name:"Desk Detox",         type:"strength",    energyMin:2,energyMax:3, duration:30, xp:125, desc:"Undo the sitting damage. Still building something.", tag:"BODYWEIGHT", isHIIT:false, exercises:[{name:"Push-Ups",sets:4,reps:"15 reps"},{name:"Bodyweight Squats",sets:4,reps:"20 reps"},{name:"Tricep Dips",sets:3,reps:"12 reps"},{name:"Plank",sets:3,reps:"45 sec"},{name:"Wall Sit",sets:3,reps:"45 sec"}] },
+  ],
+  evening:[
+    { id:"night-shift",   name:"Night Shift HIIT",   type:"hiit",        energyMin:4,             duration:40, xp:200, desc:"Burn it down before bed. Sleep earns it back.", tag:"KB · TREADMILL", isHIIT:true, workSec:40, restSec:20, exercises:[{name:"KB Swings",rounds:4,note:"35lb — explosive"},{name:"Pull-Ups",rounds:3,note:"Max reps per round"},{name:"KB Thrusters",rounds:3,note:"35lb — squat to press"},{name:"Treadmill Sprint",rounds:5,note:"60s on / 60s walk"},{name:"Turkish Get-Up",rounds:2,note:"35lb — slow, deliberate"}] },
+    { id:"strength-circuit",name:"Strength Circuit", type:"strength",    energyMin:3,energyMax:4, duration:45, xp:175, desc:"Systematic. Heavy. The kind of tired that feels earned.", tag:"BENCH · KB", isHIIT:false, exercises:[{name:"Bench Press",sets:5,reps:"8 reps"},{name:"Pull-Ups",sets:5,reps:"Max reps"},{name:"KB Romanian DL",sets:4,reps:"10 reps"},{name:"KB Rows",sets:4,reps:"12 each"},{name:"Farmer Carry",sets:3,reps:"40 steps"}] },
+    { id:"recovery-flow", name:"Recovery Flow",      type:"flexibility", energyMin:1,energyMax:2, duration:30, xp:100, desc:"Low energy tonight. Quiet counts.", tag:"MOBILITY", isHIIT:false, exercises:[{name:"Foam Roll (Legs)",sets:1,reps:"5 min"},{name:"Hip Flexor Stretch",sets:2,reps:"60s each"},{name:"Pigeon Pose",sets:2,reps:"90s each"},{name:"Chest Opener",sets:3,reps:"45 sec"},{name:"Child's Pose",sets:2,reps:"60s"}] },
+  ],
+};
+
+const ACHIEVEMENTS = [
+  { id:"first_sweat",   icon:"🔥", name:"First Drop",    desc:"Logged first workout",       xp:50,  check:d=>d.workouts.length>=1 },
+  { id:"triple_threat", icon:"⚡", name:"Triple Threat", desc:"Hit 3-workout week goal",    xp:100, check:d=>getWeekCount(d.workouts)>=3 },
+  { id:"ten_count",     icon:"💪", name:"Ten Count",     desc:"10 total workouts",          xp:150, check:d=>d.workouts.length>=10 },
+  { id:"early_bird",    icon:"🌅", name:"Early Bird",    desc:"3 morning sessions",         xp:75,  check:d=>d.workouts.filter(w=>w.timeWindow==="morning").length>=3 },
+  { id:"night_owl",     icon:"🌙", name:"Night Owl",     desc:"3 evening sessions",         xp:75,  check:d=>d.workouts.filter(w=>w.timeWindow==="evening").length>=3 },
+  { id:"office_hero",   icon:"🏢", name:"Office Hero",   desc:"First office gym session",   xp:75,  check:d=>d.workouts.some(w=>w.timeWindow==="office") },
+  { id:"dog_dad",       icon:"🐕", name:"Dog Dad",       desc:"3 Brixton runs",             xp:100, check:d=>d.workouts.filter(w=>w.workoutId==="brixton-run").length>=3 },
+  { id:"hiit_king",     icon:"👑", name:"HIIT King",     desc:"10 HIIT sessions",           xp:150, check:d=>d.workouts.filter(w=>w.type==="hiit").length>=10 },
+  { id:"hydrated",      icon:"💧", name:"Hydrated",      desc:"Hit water goal 7 days",      xp:100, check:d=>countWaterGoalDays(d.waterLog)>=7 },
+  { id:"sleep_king",    icon:"😴", name:"Well Rested",   desc:"7+ hrs sleep, 5 nights",    xp:100, check:d=>countGoodSleepDays(d.sleepLog)>=5 },
+  { id:"lean_machine",  icon:"⚖️", name:"Lean Machine",  desc:"Logged weight 10 times",    xp:75,  check:d=>(d.weightLog||[]).length>=10 },
+  { id:"streak_5",      icon:"🔥", name:"On Fire",       desc:"5-day workout streak",       xp:200, check:d=>getStreak(d.workouts)>=5 },
+];
+
+const LEVELS = [
+  {n:1,name:"ROOKIE",min:0},{n:2,name:"CONSISTENT",min:500},{n:3,name:"DEDICATED",min:1200},
+  {n:4,name:"ATHLETE",min:2500},{n:5,name:"BEAST",min:5000},
+];
+
+const DEFAULT_DATA = {
+  workouts:[], achievements:[], totalXP:0, heightIn:69,
+  weightLog:[], sleepLog:[], waterLog:[],
+  schedule:{ days:[1,3,5], timeWindow:"morning" },
+};
+
+// ============================================================
+// HELPERS
+// ============================================================
+const { useState, useEffect, useCallback, useMemo, useRef } = React;
+
+function getStreak(w) {
+  if(!w.length) return 0;
+  const today=new Date(); today.setHours(0,0,0,0);
+  const days=new Set(w.map(x=>{const d=new Date(x.date);d.setHours(0,0,0,0);return d.getTime();}));
+  const tryFrom=s=>{let n=0,d=new Date(s);while(days.has(d.getTime())){n++;d.setDate(d.getDate()-1);}return n;};
+  const s=tryFrom(today); if(s>0) return s;
+  const yest=new Date(today); yest.setDate(yest.getDate()-1); return tryFrom(yest);
+}
+function getWeekCount(w) {
+  const s=new Date(); s.setDate(s.getDate()-s.getDay()); s.setHours(0,0,0,0);
+  return w.filter(x=>new Date(x.date)>=s).length;
+}
+function getLevelInfo(xp) {
+  let curr=LEVELS[0]; for(const l of LEVELS){if(xp>=l.min)curr=l;}
+  const next=LEVELS.find(l=>l.min>xp);
+  return {...curr, next, prog:next?(xp-curr.min)/(next.min-curr.min):1};
+}
+function calcBMI(lbs,inches){return inches>0?((lbs*703)/(inches**2)).toFixed(1):"--";}
+function bmiCategory(bmi){
+  const b=parseFloat(bmi);
+  if(isNaN(b))return{label:"--",col:C.muted};
+  if(b<18.5)return{label:"Underweight",col:C.blue};
+  if(b<25)return{label:"Normal",col:C.teal};
+  if(b<30)return{label:"Overweight",col:C.gold};
+  return{label:"Obese",col:C.red};
+}
+function todayStr(){return new Date().toISOString().split("T")[0];}
+function countWaterGoalDays(log=[]){
+  const m={};for(const e of log){const d=e.date.split("T")[0];m[d]=(m[d]||0)+e.glasses;}
+  return Object.values(m).filter(v=>v>=WATER_GOAL).length;
+}
+function countGoodSleepDays(log=[]){return log.filter(e=>e.hours>=7).length;}
+function fmt(s){return `${String(Math.floor(s/60)).padStart(2,"0")}:${String(s%60).padStart(2,"0")}`;}
+function suggestWorkout(win,energy){
+  const pool=WL[win]||[];
+  const m=pool.filter(w=>energy>=(w.energyMin||1)&&energy<=(w.energyMax||5));
+  return m.length?m[Math.floor(Math.random()*m.length)]:pool[0];
+}
+function buildHIITSeq(wo){
+  const seq=[];
+  for(const ex of wo.exercises){const r=ex.rounds||3;for(let i=0;i<r;i++){seq.push({name:ex.name,note:ex.note,phase:"work",time:wo.workSec,round:i+1,totalRounds:r});seq.push({name:ex.name,note:ex.note,phase:"rest",time:wo.restSec,round:i+1,totalRounds:r});}}
+  if(seq.length&&seq[seq.length-1].phase==="rest")seq.pop();
+  return seq;
+}
+
+// ============================================================
+// PRIMITIVES
+// ============================================================
+function XPBar({prog,color=C.orange,h=6}){
+  return <div style={{background:"#2A2A2A",borderRadius:99,height:h,overflow:"hidden"}}><div style={{width:`${Math.min(100,Math.max(0,prog*100))}%`,background:color,height:"100%",borderRadius:99,transition:"width 1s ease"}}/></div>;
+}
+function TypeBadge({type}){
+  const m={hiit:[C.red,"HIIT"],strength:[C.orange,"STRENGTH"],cardio:[C.teal,"CARDIO"],flexibility:[C.purple,"MOBILITY"],freestyle:[C.gold,"FREESTYLE"]};
+  const [col,lbl]=m[type]||[C.muted,(type||"").toUpperCase()];
+  return <span style={{fontSize:10,fontWeight:700,letterSpacing:2,color:col,background:col+"22",padding:"3px 8px",borderRadius:4,border:`1px solid ${col}33`}}>{lbl}</span>;
+}
+function BackBtn({onClick}){return <button onClick={onClick} style={{background:"none",border:"none",color:C.text,fontSize:22,cursor:"pointer",padding:"4px 8px 4px 0",lineHeight:1}}>←</button>;}
+function BigBtn({onClick,children,color=C.orange,disabled=false}){
+  return <button onClick={disabled?undefined:onClick} style={{width:"100%",background:disabled?"#333":color,border:"none",borderRadius:14,padding:"17px",fontFamily:"'Bebas Neue',sans-serif",fontSize:22,letterSpacing:4,color:disabled?C.muted:"#fff",cursor:disabled?"default":"pointer"}}>{children}</button>;
+}
+
+// ============================================================
+// SIGN IN SCREEN
+// ============================================================
+function SignInScreen({onSignIn, loading, error}) {
+  return (
+    <div style={{background:C.bg,minHeight:"100vh",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"32px 24px",fontFamily:"'Rajdhani',sans-serif",color:C.text}}>
+      <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:52,letterSpacing:8,color:C.orange,lineHeight:1,marginBottom:4}}>FORGE</div>
+      <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:52,letterSpacing:8,color:C.text,lineHeight:1,marginBottom:24}}>TRACK</div>
+      <div style={{background:"#180A00",borderLeft:`3px solid ${C.orange}`,borderRadius:"0 12px 12px 0",padding:"14px 16px",marginBottom:40,maxWidth:320,textAlign:"left"}}>
+        <div style={{fontSize:10,color:C.orange,letterSpacing:2,fontWeight:700,marginBottom:6}}>COACH</div>
+        <div style={{fontSize:14,lineHeight:1.6,fontStyle:"italic"}}>
+          "The version of you Ariel married is still in there. Go excavate him."
+        </div>
+      </div>
+      {error && <div style={{fontSize:13,color:C.red,marginBottom:16,textAlign:"center",maxWidth:300}}>{error}</div>}
+      <button onClick={onSignIn} disabled={loading} style={{
+        background:loading?"#333":C.orange, border:"none", borderRadius:14,
+        padding:"17px 40px", fontFamily:"'Bebas Neue',sans-serif", fontSize:22,
+        letterSpacing:4, color:loading?C.muted:"#fff", cursor:loading?"default":"pointer",
+        width:"100%", maxWidth:320
+      }}>
+        {loading ? "SIGNING IN..." : "SIGN IN WITH MICROSOFT"}
+      </button>
+      <div style={{fontSize:11,color:C.muted,marginTop:16,textAlign:"center",lineHeight:1.6,maxWidth:280}}>
+        Uses your Microsoft 365 account to save data to OneDrive and schedule workouts in Outlook Calendar
+      </div>
+    </div>
+  );
+}
+
+// ============================================================
+// HOME VIEW
+// ============================================================
+function HomeView({data, onStart, onSchedule, userEmail}) {
+  const week=getWeekCount(data.workouts);
+  const streak=getStreak(data.workouts);
+  const {n:lvl,name:lvlName,next:nextLvl,prog:lvlProg}=getLevelInfo(data.totalXP);
+  const msg=COACH_LINES[new Date().getDay()%COACH_LINES.length];
+  const lastW=data.workouts.length?data.workouts[data.workouts.length-1]:null;
+  const latestWeight=(data.weightLog||[]).length?data.weightLog[data.weightLog.length-1].weight:null;
+  const bmi=latestWeight?calcBMI(latestWeight,data.heightIn||69):null;
+  const {label:bmiLabel,col:bmiCol}=bmi?bmiCategory(bmi):{label:"--",col:C.muted};
+  const todayWater=(data.waterLog||[]).filter(e=>e.date.startsWith(todayStr())).reduce((s,e)=>s+e.glasses,0);
+  const lastSleep=(data.sleepLog||[]).slice(-1)[0]||{};
+
+  return (
+    <div style={{padding:"0 16px"}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-end",padding:"20px 0 14px"}}>
+        <div>
+          <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:40,letterSpacing:6,color:C.orange,lineHeight:1}}>FORGETRACK</div>
+          <div style={{fontSize:10,color:C.muted,letterSpacing:3,fontWeight:700}}>KEN'S TRAINING LOG</div>
+        </div>
+        <div style={{textAlign:"right"}}>
+          <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:28,color:C.gold,lineHeight:1}}>LVL {lvl}</div>
+          <div style={{fontSize:10,color:C.muted,letterSpacing:2}}>{lvlName}</div>
+        </div>
+      </div>
+
+      <div style={{background:"#180A00",borderLeft:`3px solid ${C.orange}`,borderRadius:"0 12px 12px 0",padding:"14px 16px",marginBottom:12}}>
+        <div style={{fontSize:10,color:C.orange,letterSpacing:2,fontWeight:700,marginBottom:6}}>COACH · {msg.tag}</div>
+        <div style={{fontSize:15,lineHeight:1.55,fontStyle:"italic",color:C.text}}>"{msg.line}"</div>
+      </div>
+
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:12}}>
+        {[{val:week,sub:`OF ${WEEKLY_GOAL} THIS WEEK`,col:week>=WEEKLY_GOAL?C.teal:C.orange},{val:streak,sub:"DAY STREAK",col:streak>0?C.orange:C.muted},{val:data.totalXP,sub:"TOTAL XP",col:C.gold}].map((s,i)=>(
+          <div key={i} style={{background:C.card,borderRadius:12,padding:"14px 8px",textAlign:"center"}}>
+            <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:34,color:s.col,lineHeight:1}}>{s.val}</div>
+            <div style={{fontSize:9,color:C.muted,letterSpacing:1.5,fontWeight:700,marginTop:2,lineHeight:1.3}}>{s.sub}</div>
+          </div>
+        ))}
+      </div>
+
+      <div style={{background:C.card,borderRadius:12,padding:"14px 16px",marginBottom:12}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+          <div style={{fontSize:11,fontWeight:700,letterSpacing:2}}>THIS WEEK</div>
+          <div style={{fontSize:12,color:week>=WEEKLY_GOAL?C.teal:C.orange,fontWeight:700}}>{week} / {WEEKLY_GOAL}</div>
+        </div>
+        <div style={{display:"flex",gap:10,justifyContent:"center"}}>
+          {Array.from({length:WEEKLY_GOAL}).map((_,i)=>{const done=i<week;const col=done?(week>=WEEKLY_GOAL?C.teal:C.orange):"#2A2A2A";return <div key={i} style={{width:52,height:52,borderRadius:"50%",background:col,display:"flex",alignItems:"center",justifyContent:"center",fontSize:done?20:16,fontFamily:"'Bebas Neue',sans-serif",color:done?"#fff":C.muted,border:`2px solid ${done?col:"#333"}`,transition:"all 0.4s"}}>{done?"✓":i+1}</div>;})}
+        </div>
+        {week>=WEEKLY_GOAL&&<div style={{textAlign:"center",fontSize:11,color:C.teal,fontWeight:700,letterSpacing:2,marginTop:10}}>WEEKLY GOAL CRUSHED ⚡</div>}
+      </div>
+
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:12}}>
+        <div style={{background:C.card,borderRadius:12,padding:"12px 8px",textAlign:"center"}}>
+          <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:28,color:C.text,lineHeight:1}}>{latestWeight||"--"}</div>
+          <div style={{fontSize:9,color:C.muted,letterSpacing:1,marginTop:2}}>LBS</div>
+        </div>
+        <div style={{background:C.card,borderRadius:12,padding:"12px 8px",textAlign:"center"}}>
+          <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:28,color:bmiCol,lineHeight:1}}>{bmi||"--"}</div>
+          <div style={{fontSize:9,color:bmiCol,letterSpacing:1,marginTop:2}}>{bmiLabel==="--"?"BMI":bmiLabel.toUpperCase()}</div>
+        </div>
+        <div style={{background:C.card,borderRadius:12,padding:"12px 8px",textAlign:"center"}}>
+          <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:28,color:lastSleep.hours>=7?C.teal:lastSleep.hours?C.gold:C.muted,lineHeight:1}}>{lastSleep.hours||"--"}</div>
+          <div style={{fontSize:9,color:C.muted,letterSpacing:1,marginTop:2}}>HRS SLEEP</div>
+        </div>
+      </div>
+
+      <div style={{background:C.card,borderRadius:12,padding:"14px 16px",marginBottom:12}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+          <div style={{fontSize:11,fontWeight:700,letterSpacing:2}}>💧 TODAY'S WATER</div>
+          <div style={{fontSize:12,color:todayWater>=WATER_GOAL?C.teal:C.blue,fontWeight:700}}>{todayWater} / {WATER_GOAL}</div>
+        </div>
+        <XPBar prog={todayWater/WATER_GOAL} color={C.blue} h={8}/>
+        {todayWater>=WATER_GOAL&&<div style={{fontSize:11,color:C.teal,fontWeight:700,letterSpacing:2,marginTop:6}}>HYDRATED ✓</div>}
+      </div>
+
+      <div style={{background:C.card,borderRadius:12,padding:"14px 16px",marginBottom:12}}>
+        <div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}>
+          <div style={{fontSize:11,fontWeight:700,letterSpacing:2}}>LEVEL {lvl} — {lvlName}</div>
+          {nextLvl?<div style={{fontSize:11,color:C.muted}}>{nextLvl.min-data.totalXP} XP → {nextLvl.name}</div>:<div style={{fontSize:11,color:C.gold}}>MAX RANK</div>}
+        </div>
+        <XPBar prog={lvlProg} color={C.gold}/>
+      </div>
+
+      {lastW&&(
+        <div style={{background:C.card,borderRadius:12,padding:"14px 16px",marginBottom:12}}>
+          <div style={{fontSize:10,color:C.muted,letterSpacing:2,marginBottom:8}}>LAST WORKOUT</div>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+            <div>
+              <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:20,letterSpacing:2,marginBottom:4}}>{lastW.name}</div>
+              <div style={{display:"flex",gap:8,alignItems:"center"}}><TypeBadge type={lastW.type}/><span style={{fontSize:11,color:C.muted}}>{new Date(lastW.date).toLocaleDateString("en-US",{weekday:"short",month:"short",day:"numeric"})} · {lastW.duration}m</span></div>
+            </div>
+            <div style={{textAlign:"right"}}><div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:28,color:C.gold}}>+{lastW.xp}</div><div style={{fontSize:9,color:C.muted}}>XP</div></div>
+          </div>
+        </div>
+      )}
+
+      <BigBtn onClick={onStart}>START WORKOUT</BigBtn>
+      <div style={{height:8}}/>
+      <button onClick={onSchedule} style={{width:"100%",background:"none",border:`1px solid ${C.border}`,borderRadius:14,padding:"13px",fontFamily:"'Bebas Neue',sans-serif",fontSize:16,letterSpacing:3,color:C.muted,cursor:"pointer",marginBottom:4}}>
+        📅 SCHEDULE & OUTLOOK CALENDAR
+      </button>
+      <div style={{textAlign:"center",fontSize:10,color:"#333",paddingBottom:4}}>{userEmail}</div>
+    </div>
+  );
+}
+
+// ============================================================
+// BODY VIEW
+// ============================================================
+function BodyView({data,onSave}){
+  const [section,setSection]=useState("weight");
+  return(
+    <div style={{padding:"0 16px"}}>
+      <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:28,letterSpacing:3,padding:"20px 0 12px"}}>BODY STATS</div>
+      <div style={{display:"flex",gap:8,marginBottom:16}}>
+        {[["weight","⚖️ WEIGHT"],["sleep","😴 SLEEP"],["water","💧 WATER"]].map(([id,lbl])=>(
+          <button key={id} onClick={()=>setSection(id)} style={{flex:1,background:section===id?C.surface:"none",border:`1px solid ${section===id?C.orange:C.border}`,borderRadius:10,padding:"9px 4px",fontFamily:"'Bebas Neue',sans-serif",fontSize:12,letterSpacing:1,color:section===id?C.orange:C.muted,cursor:"pointer"}}>{lbl}</button>
+        ))}
+      </div>
+      {section==="weight"&&<WeightSection data={data} onSave={onSave}/>}
+      {section==="sleep" &&<SleepSection  data={data} onSave={onSave}/>}
+      {section==="water" &&<WaterSection  data={data} onSave={onSave}/>}
+    </div>
+  );
+}
+
+function WeightSection({data,onSave}){
+  const [weight,setWeight]=useState("");
+  const [height,setHeight]=useState(String(data.heightIn||69));
+  const log=data.weightLog||[];
+  const latest=log.length?log[log.length-1].weight:null;
+  const bmi=latest?calcBMI(latest,parseInt(height)||69):null;
+  const {label,col}=bmi?bmiCategory(bmi):{label:"--",col:C.muted};
+  const doLog=()=>{
+    const w=parseFloat(weight); if(isNaN(w)||w<50||w>500)return;
+    onSave({weightLog:[...log,{date:new Date().toISOString(),weight:w}],heightIn:parseInt(height)||69});
+    setWeight("");
+  };
+  const chart=log.slice(-20);
+  const weights=chart.map(e=>e.weight);
+  const minW=weights.length?Math.min(...weights)-5:150;
+  const maxW=weights.length?Math.max(...weights)+5:200;
+  const range=maxW-minW||1;
+  return(
+    <div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:12}}>
+        <div style={{background:C.card,borderRadius:12,padding:"16px",textAlign:"center"}}><div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:44,color:C.text,lineHeight:1}}>{latest||"--"}</div><div style={{fontSize:10,color:C.muted,letterSpacing:1}}>POUNDS</div></div>
+        <div style={{background:C.card,borderRadius:12,padding:"16px",textAlign:"center"}}><div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:44,color:col,lineHeight:1}}>{bmi||"--"}</div><div style={{fontSize:10,color:col,letterSpacing:1}}>{label==="--"?"BMI":label.toUpperCase()}</div></div>
+      </div>
+      {chart.length>1&&(
+        <div style={{background:C.card,borderRadius:12,padding:"14px 16px",marginBottom:12}}>
+          <div style={{fontSize:10,color:C.muted,letterSpacing:2,marginBottom:12}}>WEIGHT TREND</div>
+          <svg width="100%" height="60" style={{display:"block",overflow:"visible"}}>
+            <polyline fill="none" stroke={C.orange} strokeWidth="2" strokeLinejoin="round" points={chart.map((e,i)=>`${(i/(chart.length-1))*95+2}%,${((maxW-e.weight)/range*50+5)}`).join(" ")}/>
+            {chart.map((e,i)=><circle key={i} cx={`${(i/(chart.length-1))*95+2}%`} cy={(maxW-e.weight)/range*50+5} r="3" fill={C.orange}/>)}
+          </svg>
+          <div style={{display:"flex",justifyContent:"space-between",fontSize:10,color:C.muted,marginTop:4}}>
+            <span>{new Date(chart[0].date).toLocaleDateString("en-US",{month:"short",day:"numeric"})}</span>
+            <span>{new Date(chart[chart.length-1].date).toLocaleDateString("en-US",{month:"short",day:"numeric"})}</span>
+          </div>
+        </div>
+      )}
+      <div style={{background:C.card,borderRadius:12,padding:"14px 16px",marginBottom:12}}>
+        <div style={{fontSize:10,color:C.muted,letterSpacing:2,marginBottom:12}}>LOG WEIGHT</div>
+        <div style={{display:"flex",gap:8,marginBottom:10}}>
+          <input value={weight} onChange={e=>setWeight(e.target.value)} placeholder="Weight (lbs)" type="number" style={{flex:1,background:C.surface,border:`1px solid ${C.border}`,borderRadius:8,color:C.text,padding:"10px 12px",fontFamily:"inherit",fontSize:15}}/>
+          <button onClick={doLog} style={{background:C.orange,border:"none",borderRadius:8,padding:"10px 18px",fontFamily:"'Bebas Neue',sans-serif",fontSize:16,letterSpacing:2,color:"#fff",cursor:"pointer"}}>LOG</button>
+        </div>
+        <div style={{display:"flex",alignItems:"center",gap:10}}>
+          <div style={{fontSize:12,color:C.muted}}>Height:</div>
+          <input value={height} onChange={e=>setHeight(e.target.value)} type="number" style={{width:70,background:C.surface,border:`1px solid ${C.border}`,borderRadius:8,color:C.text,padding:"6px 10px",fontFamily:"inherit",fontSize:14}}/>
+          <div style={{fontSize:12,color:C.muted}}>in</div>
+        </div>
+      </div>
+      {[...log].reverse().slice(0,10).map((e,i)=>{const b=calcBMI(e.weight,data.heightIn||69);const {col:bc}=bmiCategory(b);return(
+        <div key={i} style={{background:C.card,borderRadius:10,padding:"12px 16px",marginBottom:6,display:"flex",justifyContent:"space-between"}}>
+          <div style={{fontSize:13,color:C.muted}}>{new Date(e.date).toLocaleDateString("en-US",{weekday:"short",month:"short",day:"numeric"})}</div>
+          <div style={{display:"flex",gap:12}}><span style={{fontWeight:700}}>{e.weight} lbs</span><span style={{color:bc,fontSize:12}}>BMI {b}</span></div>
+        </div>
+      );})}
+      <div style={{height:8}}/>
+    </div>
+  );
+}
+
+function SleepSection({data,onSave}){
+  const [hours,setHours]=useState("");
+  const [quality,setQuality]=useState(3);
+  const log=data.sleepLog||[];
+  const recent=log.slice(-7);
+  const avg=recent.length?(recent.reduce((s,e)=>s+e.hours,0)/recent.length).toFixed(1):null;
+  const doLog=()=>{const h=parseFloat(hours);if(isNaN(h)||h<0||h>24)return;onSave({sleepLog:[...log,{date:new Date().toISOString(),hours:h,quality}]});setHours("");setQuality(3);};
+  return(
+    <div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:12}}>
+        <div style={{background:C.card,borderRadius:12,padding:"16px",textAlign:"center"}}><div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:44,color:avg>=7?C.teal:C.gold,lineHeight:1}}>{avg||"--"}</div><div style={{fontSize:10,color:C.muted,letterSpacing:1}}>AVG HRS (7 DAYS)</div></div>
+        <div style={{background:C.card,borderRadius:12,padding:"16px",textAlign:"center"}}><div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:44,color:C.text,lineHeight:1}}>{countGoodSleepDays(log)}</div><div style={{fontSize:10,color:C.muted,letterSpacing:1}}>7+ HR NIGHTS</div></div>
+      </div>
+      <div style={{background:C.card,borderRadius:12,padding:"14px 16px",marginBottom:12}}>
+        <div style={{fontSize:10,color:C.muted,letterSpacing:2,marginBottom:12}}>LOG LAST NIGHT</div>
+        <div style={{display:"flex",gap:8,marginBottom:12}}>
+          <input value={hours} onChange={e=>setHours(e.target.value)} placeholder="Hours slept" type="number" step="0.5" style={{flex:1,background:C.surface,border:`1px solid ${C.border}`,borderRadius:8,color:C.text,padding:"10px 12px",fontFamily:"inherit",fontSize:15}}/>
+          <button onClick={doLog} style={{background:C.purple,border:"none",borderRadius:8,padding:"10px 18px",fontFamily:"'Bebas Neue',sans-serif",fontSize:16,letterSpacing:2,color:"#fff",cursor:"pointer"}}>LOG</button>
+        </div>
+        <div style={{fontSize:11,color:C.muted,marginBottom:8}}>Sleep quality:</div>
+        <div style={{display:"flex",gap:8}}>
+          {[1,2,3,4,5].map(n=><button key={n} onClick={()=>setQuality(n)} style={{flex:1,background:quality===n?C.purple:"none",border:`1px solid ${quality===n?C.purple:C.border}`,borderRadius:8,padding:"8px 4px",fontFamily:"'Bebas Neue',sans-serif",fontSize:16,color:quality===n?"#fff":C.muted,cursor:"pointer"}}>{n}</button>)}
+        </div>
+      </div>
+      {[...log].reverse().slice(0,8).map((e,i)=>{const qc=e.quality>=4?C.teal:e.quality<=2?C.red:C.gold;return(
+        <div key={i} style={{background:C.card,borderRadius:10,padding:"12px 16px",marginBottom:6,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <div style={{fontSize:13,color:C.muted}}>{new Date(e.date).toLocaleDateString("en-US",{weekday:"short",month:"short",day:"numeric"})}</div>
+          <div style={{display:"flex",gap:12,alignItems:"center"}}><span style={{fontWeight:700,color:e.hours>=7?C.teal:C.gold}}>{e.hours}h</span><span style={{fontSize:12,color:qc}}>Q {e.quality}/5</span></div>
+        </div>
+      );})}
+      <div style={{height:8}}/>
+    </div>
+  );
+}
+
+function WaterSection({data,onSave}){
+  const log=data.waterLog||[];
+  const todayG=log.filter(e=>e.date.startsWith(todayStr())).reduce((s,e)=>s+e.glasses,0);
+  const add=n=>{onSave({waterLog:[...log,{date:new Date().toISOString(),glasses:n}]});};
+  return(
+    <div>
+      <div style={{background:C.card,borderRadius:14,padding:"20px 16px",marginBottom:12,textAlign:"center"}}>
+        <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:72,color:todayG>=WATER_GOAL?C.teal:C.blue,lineHeight:1}}>{todayG}</div>
+        <div style={{fontSize:14,color:C.muted,marginBottom:16}}>of {WATER_GOAL} glasses today</div>
+        <XPBar prog={Math.min(1,todayG/WATER_GOAL)} color={C.blue} h={10}/>
+        {todayG>=WATER_GOAL&&<div style={{fontSize:12,color:C.teal,fontWeight:700,letterSpacing:2,marginTop:8}}>GOAL REACHED ✓</div>}
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:8,marginBottom:12}}>
+        {Array.from({length:WATER_GOAL}).map((_,i)=>{const filled=i<todayG;return <button key={i} onClick={filled?null:()=>add(1)} style={{background:filled?C.blue+"33":"none",border:`2px solid ${filled?C.blue:C.border}`,borderRadius:12,padding:"16px 0",cursor:filled?"default":"pointer",fontSize:24}}>{filled?"🥤":"⬜"}</button>;})}
+      </div>
+      <div style={{display:"flex",gap:8,marginBottom:16}}>
+        <button onClick={()=>add(1)} style={{flex:1,background:C.blue,border:"none",borderRadius:12,padding:"14px",fontFamily:"'Bebas Neue',sans-serif",fontSize:18,letterSpacing:3,color:"#fff",cursor:"pointer"}}>+ 1 GLASS</button>
+        <button onClick={()=>add(2)} style={{flex:1,background:"none",border:`1px solid ${C.blue}`,borderRadius:12,padding:"14px",fontFamily:"'Bebas Neue',sans-serif",fontSize:18,letterSpacing:2,color:C.blue,cursor:"pointer"}}>+ 2 GLASSES</button>
+      </div>
+      <div style={{fontSize:10,color:C.muted,letterSpacing:2,marginBottom:8}}>RECENT DAYS</div>
+      {Array.from({length:7}).map((_,i)=>{const d=new Date();d.setDate(d.getDate()-i);const ds=d.toISOString().split("T")[0];const g=log.filter(e=>e.date.startsWith(ds)).reduce((s,e)=>s+e.glasses,0);return(
+        <div key={i} style={{background:C.card,borderRadius:10,padding:"10px 16px",marginBottom:6,display:"flex",alignItems:"center",gap:10}}>
+          <div style={{fontSize:12,color:C.muted,width:88}}>{i===0?"Today":d.toLocaleDateString("en-US",{weekday:"short",month:"short",day:"numeric"})}</div>
+          <div style={{flex:1,height:8,background:"#2A2A2A",borderRadius:99,overflow:"hidden"}}><div style={{width:`${Math.min(100,(g/WATER_GOAL)*100)}%`,height:"100%",background:g>=WATER_GOAL?C.teal:C.blue,borderRadius:99}}/></div>
+          <div style={{fontSize:12,color:g>=WATER_GOAL?C.teal:C.muted,fontWeight:700,width:24,textAlign:"right"}}>{g}</div>
+        </div>
+      );})}
+      <div style={{height:8}}/>
+    </div>
+  );
+}
+
+// ============================================================
+// SCHEDULE MODAL
+// ============================================================
+function ScheduleModal({data,onSave,onClose}){
+  const [days,setDays]=useState(data.schedule?.days||[1,3,5]);
+  const [win,setWin]=useState(data.schedule?.timeWindow||"morning");
+  const [calStatus,setCalStatus]=useState("");
+  const [calLoading,setCalLoading]=useState(false);
+  const toggleDay=d=>setDays(prev=>prev.includes(d)?prev.filter(x=>x!==d):[...prev,d].sort());
+
+  const addToCalendar=async()=>{
+    if(!days.length){setCalStatus("Pick at least one day first.");return;}
+    setCalLoading(true); setCalStatus("");
+    try{
+      await createOutlookEvents(days,win);
+      setCalStatus("✓ Recurring events added to Outlook Calendar!");
+      onSave({schedule:{days,timeWindow:win}});
+    }catch(e){
+      setCalStatus(`Error: ${e.message}. Check your Microsoft permissions.`);
+    }
+    setCalLoading(false);
+  };
+
+  return(
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.88)",zIndex:200,display:"flex",alignItems:"flex-end"}} onClick={onClose}>
+      <div onClick={e=>e.stopPropagation()} style={{background:C.bg,borderRadius:"20px 20px 0 0",width:"100%",maxWidth:430,margin:"0 auto",padding:"20px 16px 48px",maxHeight:"88vh",overflowY:"auto",border:`1px solid ${C.border}`}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
+          <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:24,letterSpacing:3}}>SCHEDULE</div>
+          <button onClick={onClose} style={{background:"none",border:"none",color:C.muted,fontSize:22,cursor:"pointer",padding:4}}>✕</button>
+        </div>
+
+        <div style={{fontSize:11,color:C.muted,letterSpacing:2,marginBottom:10}}>WORKOUT DAYS</div>
+        <div style={{display:"flex",gap:5,marginBottom:16}}>
+          {DAYS_SHORT.map((d,i)=>(
+            <button key={i} onClick={()=>toggleDay(i)} style={{flex:1,background:days.includes(i)?C.orange:"none",border:`1px solid ${days.includes(i)?C.orange:C.border}`,borderRadius:8,padding:"8px 2px",fontFamily:"'Bebas Neue',sans-serif",fontSize:11,color:days.includes(i)?"#fff":C.muted,cursor:"pointer"}}>{d}</button>
+          ))}
+        </div>
+
+        <div style={{fontSize:11,color:C.muted,letterSpacing:2,marginBottom:10}}>TIME WINDOW</div>
+        <div style={{display:"flex",gap:8,marginBottom:20}}>
+          {[["morning","🌅 MORNING"],["office","🏢 OFFICE"],["evening","🌙 EVENING"]].map(([id,lbl])=>(
+            <button key={id} onClick={()=>setWin(id)} style={{flex:1,background:win===id?C.surface:"none",border:`1px solid ${win===id?C.orange:C.border}`,borderRadius:10,padding:"10px 4px",fontFamily:"'Bebas Neue',sans-serif",fontSize:11,color:win===id?C.orange:C.muted,cursor:"pointer"}}>{lbl}</button>
+          ))}
+        </div>
+
+        <div style={{background:"#030D1A",border:`1px solid ${C.blue}33`,borderRadius:12,padding:"14px 16px",marginBottom:12}}>
+          <div style={{fontSize:11,color:C.blue,fontWeight:700,letterSpacing:2,marginBottom:6}}>📅 OUTLOOK CALENDAR</div>
+          <div style={{fontSize:13,color:C.muted,marginBottom:12,lineHeight:1.5}}>
+            Creates recurring weekly Outlook Calendar events with 30-min advance reminders for your selected days.
+          </div>
+          <button onClick={addToCalendar} disabled={calLoading} style={{width:"100%",background:calLoading?"#1A2030":C.blue,border:"none",borderRadius:10,padding:"13px",fontFamily:"'Bebas Neue',sans-serif",fontSize:18,letterSpacing:3,color:calLoading?C.muted:"#fff",cursor:calLoading?"default":"pointer"}}>
+            {calLoading?"CREATING EVENTS...":"ADD TO OUTLOOK CALENDAR"}
+          </button>
+          {calStatus&&<div style={{fontSize:12,color:calStatus.startsWith("✓")?C.teal:C.red,marginTop:8,textAlign:"center",lineHeight:1.4}}>{calStatus}</div>}
+        </div>
+
+        <button onClick={()=>{onSave({schedule:{days,timeWindow:win}});onClose();}} style={{width:"100%",background:C.orange,border:"none",borderRadius:14,padding:"15px",fontFamily:"'Bebas Neue',sans-serif",fontSize:20,letterSpacing:4,color:"#fff",cursor:"pointer"}}>SAVE SCHEDULE</button>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================
+// TRAIN FLOW
+// ============================================================
+function TrainFlow({onComplete,onBack}){
+  const [step,setStep]=useState("window");
+  const [win,setWin]=useState(null);
+  const [energy,setEnergy]=useState(null);
+  const [workout,setWorkout]=useState(null);
+  if(step==="window")  return <WindowStep  onPick={w=>{setWin(w);setStep("energy");}} onBack={onBack}/>;
+  if(step==="energy")  return <EnergyStep  onPick={e=>{setEnergy(e);setWorkout(suggestWorkout(win,e));setStep("workout");}} onBack={()=>setStep("window")}/>;
+  if(step==="workout") return <WorkoutPreview workout={workout} onStart={()=>setStep("active")} onFree={()=>{setWorkout(null);setStep("active");}} onBack={()=>setStep("energy")}/>;
+  if(step==="active")  return <ActiveWorkout workout={workout} win={win} energy={energy} onDone={onComplete} onBack={()=>setStep("workout")}/>;
+  return null;
+}
+
+function WindowStep({onPick,onBack}){
+  const opts=[{id:"morning",icon:"🌅",label:"MORNING",sub:"5AM · Home Gym · 45–60 min",badge:"MOST LIKELY",bc:C.teal},{id:"evening",icon:"🌙",label:"EVENING",sub:"8:30PM · Home Gym · 45–60 min",badge:"MOST LIKELY",bc:C.teal},{id:"office",icon:"🏢",label:"OFFICE",sub:"3:30PM · Work Gym · 30–45 min",badge:"STRETCH GOAL",bc:C.gold}];
+  return(
+    <div style={{padding:"0 16px"}}>
+      <div style={{display:"flex",gap:12,alignItems:"center",padding:"20px 0 20px"}}><BackBtn onClick={onBack}/><div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:24,letterSpacing:3}}>WHEN ARE YOU TRAINING?</div></div>
+      {opts.map(o=>(
+        <button key={o.id} onClick={()=>onPick(o.id)} style={{display:"flex",alignItems:"center",gap:16,background:C.card,border:`1px solid ${C.border}`,borderRadius:14,padding:"18px 16px",marginBottom:10,width:"100%",textAlign:"left",cursor:"pointer"}}>
+          <div style={{fontSize:30}}>{o.icon}</div>
+          <div style={{flex:1}}><div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:22,letterSpacing:2,color:C.text}}>{o.label}</div><div style={{fontSize:12,color:C.muted}}>{o.sub}</div></div>
+          <div style={{fontSize:9,color:o.bc,letterSpacing:1,fontWeight:700}}>{o.badge}</div>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function EnergyStep({onPick,onBack}){
+  const opts=[{n:1,label:"DEAD",sub:"Running on empty. Still here.",col:"#444"},{n:2,label:"LOW",sub:"Need the win more than the grind.",col:"#666"},{n:3,label:"STEADY",sub:"Average day. Ready to work.",col:C.orange},{n:4,label:"CHARGED",sub:"Feeling it. Let's go.",col:"#FF7A00"},{n:5,label:"LOCKED IN",sub:"Full send. Nothing held back.",col:C.red}];
+  return(
+    <div style={{padding:"0 16px"}}>
+      <div style={{display:"flex",gap:12,alignItems:"center",padding:"20px 0 8px"}}><BackBtn onClick={onBack}/><div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:24,letterSpacing:3}}>HOW'S YOUR ENGINE?</div></div>
+      <div style={{fontSize:13,color:C.muted,marginBottom:16}}>Coach needs the honest answer. No showing off.</div>
+      {opts.map(o=>(
+        <button key={o.n} onClick={()=>onPick(o.n)} style={{display:"flex",alignItems:"center",gap:16,background:C.card,border:`1px solid ${o.col}44`,borderRadius:14,padding:"14px 16px",marginBottom:8,width:"100%",textAlign:"left",cursor:"pointer"}}>
+          <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:46,color:o.col,width:52,textAlign:"center",lineHeight:1}}>{o.n}</div>
+          <div><div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:20,letterSpacing:2,color:o.col}}>{o.label}</div><div style={{fontSize:12,color:C.muted}}>{o.sub}</div></div>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function WorkoutPreview({workout,onStart,onFree,onBack}){
+  if(!workout)return null;
+  const tc={hiit:C.red,strength:C.orange,cardio:C.teal,flexibility:C.purple}[workout.type]||C.orange;
+  return(
+    <div style={{padding:"0 16px"}}>
+      <div style={{display:"flex",gap:12,alignItems:"center",padding:"20px 0 16px"}}><BackBtn onClick={onBack}/><div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:24,letterSpacing:3}}>YOUR WORKOUT</div></div>
+      <div style={{background:C.card,borderRadius:14,padding:"18px",marginBottom:12,border:`1px solid ${tc}44`}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10}}>
+          <span style={{fontSize:10,color:tc,background:tc+"22",border:`1px solid ${tc}33`,padding:"3px 8px",borderRadius:4,fontWeight:700,letterSpacing:2}}>{workout.tag}</span>
+          <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:18,color:C.gold}}>+{workout.xp} XP</div>
+        </div>
+        <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:30,letterSpacing:2,marginBottom:4}}>{workout.name}</div>
+        <div style={{fontSize:14,color:C.muted,fontStyle:"italic",marginBottom:12}}>"{workout.desc}"</div>
+        <div style={{fontSize:11,color:C.muted,letterSpacing:1,marginBottom:10}}>~{workout.duration} MIN{workout.isHIIT?` · ${workout.workSec}s WORK / ${workout.restSec}s REST`:""}</div>
+        {workout.exercises.map((ex,i)=>(
+          <div key={i} style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderTop:`1px solid ${C.border}`,fontSize:14}}>
+            <span style={{fontWeight:600}}>{ex.name}</span>
+            <span style={{color:C.muted,fontSize:12}}>{ex.rounds?`${ex.rounds}×`:ex.sets?`${ex.sets}×${ex.reps}`:""}</span>
+          </div>
+        ))}
+      </div>
+      <button onClick={onStart} style={{width:"100%",background:tc,border:"none",borderRadius:14,padding:"16px",fontFamily:"'Bebas Neue',sans-serif",fontSize:22,letterSpacing:4,color:"#fff",cursor:"pointer",marginBottom:8}}>
+        {workout.isHIIT?"⚡ START HIIT TIMER":"▶ START WORKOUT"}
+      </button>
+      <button onClick={onFree} style={{width:"100%",background:"none",border:`1px solid ${C.border}`,borderRadius:14,padding:"14px",fontFamily:"'Bebas Neue',sans-serif",fontSize:16,letterSpacing:2,color:C.muted,cursor:"pointer"}}>FREESTYLE INSTEAD</button>
+    </div>
+  );
+}
+
+function ActiveWorkout({workout,win,energy,onDone,onBack}){
+  const [start]=useState(Date.now());
+  const [elapsed,setElapsed]=useState(0);
+  useEffect(()=>{const id=setInterval(()=>setElapsed(Math.floor((Date.now()-start)/1000)),1000);return()=>clearInterval(id);},[start]);
+  const finish=useCallback(()=>{
+    const dur=Math.max(Math.round(elapsed/60),1);
+    onDone({id:Date.now().toString(),date:new Date().toISOString(),timeWindow:win,workoutId:workout?.id||"freestyle",name:workout?.name||"Freestyle Workout",type:workout?.type||"freestyle",energyLevel:energy,duration:dur,xp:workout?.xp||100});
+  },[elapsed,win,workout,energy,onDone]);
+  if(workout?.isHIIT)return <HIITTimer workout={workout} elapsed={elapsed} onFinish={finish} onBack={onBack}/>;
+  return <ExerciseList workout={workout} elapsed={elapsed} onFinish={finish} onBack={onBack}/>;
+}
+
+function HIITTimer({workout,elapsed,onFinish,onBack}){
+  const seq=useMemo(()=>buildHIITSeq(workout),[workout]);
+  const [view,setView]=useState("ready");
+  const [curr,setCurr]=useState({idx:0,timeLeft:seq[0]?.time||40});
+  useEffect(()=>{
+    if(view!=="running")return;
+    const id=setTimeout(()=>{setCurr(prev=>{if(prev.timeLeft>1)return{...prev,timeLeft:prev.timeLeft-1};const nx=prev.idx+1;if(nx>=seq.length){setView("done");return prev;}return{idx:nx,timeLeft:seq[nx].time};});},1000);
+    return()=>clearTimeout(id);
+  },[view,curr,seq]);
+  const item=seq[curr.idx]; const isWork=item?.phase==="work"; const pc=isWork?C.red:C.teal;
+  if(view==="ready")return(<div style={{padding:"0 16px",textAlign:"center"}}><div style={{display:"flex",alignItems:"center",gap:12,padding:"20px 0 30px"}}><BackBtn onClick={onBack}/><div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:22,letterSpacing:2}}>{workout.name}</div></div><div style={{fontSize:72,marginBottom:12}}>⚡</div><div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:22,letterSpacing:4,color:C.orange,marginBottom:8}}>HIIT TIMER READY</div><div style={{fontSize:13,color:C.muted,marginBottom:40}}>{workout.workSec}s work / {workout.restSec}s rest · {seq.length} intervals</div><button onClick={()=>setView("running")} style={{width:"100%",background:C.red,border:"none",borderRadius:14,padding:"18px",fontFamily:"'Bebas Neue',sans-serif",fontSize:36,letterSpacing:8,color:"#fff",cursor:"pointer"}}>GO</button></div>);
+  if(view==="done")return(<div style={{padding:"0 16px",textAlign:"center"}}><div style={{marginTop:56,fontSize:64,marginBottom:12}}>🔥</div><div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:52,color:C.orange,letterSpacing:5,marginBottom:8}}>DONE.</div><div style={{fontSize:14,color:C.muted,fontStyle:"italic",marginBottom:40,lineHeight:1.6}}>That's what showing up looks like. Log it.</div><BigBtn onClick={onFinish}>LOG THIS WORKOUT</BigBtn></div>);
+  return(
+    <div style={{padding:"0 16px"}}>
+      <div style={{display:"flex",justifyContent:"space-between",padding:"16px 0 12px"}}><div style={{fontSize:12,color:C.muted}}>⏱ {fmt(elapsed)}</div><div style={{fontSize:12,color:C.muted}}>INTERVAL {curr.idx+1}/{seq.length}</div></div>
+      <div style={{background:isWork?"#1A0400":"#001A10",border:`2px solid ${pc}`,borderRadius:16,padding:"28px 16px",textAlign:"center",marginBottom:12}}>
+        <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:16,letterSpacing:4,color:pc,marginBottom:6}}>{isWork?"WORK":"REST"}</div>
+        <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:108,color:pc,lineHeight:1}}>{curr.timeLeft}</div>
+      </div>
+      <div style={{background:C.card,borderRadius:12,padding:"14px 16px",marginBottom:8}}><div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:26,letterSpacing:2,marginBottom:4}}>{item?.name}</div>{item?.note&&<div style={{fontSize:13,color:C.muted}}>{item.note}</div>}<div style={{fontSize:11,color:C.muted,marginTop:6}}>ROUND {item?.round} OF {item?.totalRounds}</div></div>
+      <XPBar prog={curr.idx/seq.length} color={pc} h={4}/>
+    </div>
+  );
+}
+
+function ExerciseList({workout,elapsed,onFinish,onBack}){
+  const exs=workout?.exercises||[];
+  const [done,setDone]=useState(exs.map(()=>false));
+  const [free,setFree]=useState([]);
+  const [name,setName]=useState(""); const [detail,setDetail]=useState("");
+  const toggle=i=>setDone(prev=>{const n=[...prev];n[i]=!n[i];return n;});
+  const add=()=>{if(!name.trim())return;setFree(p=>[...p,{name,sets:1,reps:detail||"—"}]);setName("");setDetail("");};
+  const allDone=workout?(exs.length>0&&done.every(Boolean)):free.length>0;
+  return(
+    <div style={{padding:"0 16px"}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"20px 0 16px"}}>
+        <div style={{display:"flex",gap:12,alignItems:"center"}}><BackBtn onClick={onBack}/><div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:20,letterSpacing:2}}>{workout?.name||"FREESTYLE"}</div></div>
+        <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:16,color:C.muted}}>{fmt(elapsed)}</div>
+      </div>
+      {(workout?exs:free).map((ex,i)=>(
+        <button key={i} onClick={()=>workout&&toggle(i)} style={{display:"flex",alignItems:"center",gap:12,background:C.card,borderRadius:12,padding:"14px 16px",marginBottom:8,width:"100%",textAlign:"left",border:`1px solid ${done[i]?C.teal:C.border}`,cursor:workout?"pointer":"default",opacity:done[i]?0.5:1}}>
+          {workout&&<div style={{width:26,height:26,borderRadius:"50%",background:done[i]?C.teal:"transparent",border:`2px solid ${done[i]?C.teal:"#444"}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,flexShrink:0,color:"#fff"}}>{done[i]&&"✓"}</div>}
+          <div style={{flex:1}}><div style={{fontWeight:700,fontSize:15}}>{ex.name}</div><div style={{fontSize:12,color:C.muted}}>{ex.sets?`${ex.sets} × ${ex.reps}`:ex.duration||"—"}{ex.note?` · ${ex.note}`:""}</div></div>
+        </button>
+      ))}
+      {!workout&&(
+        <div style={{background:C.card,borderRadius:12,padding:"14px 16px",marginBottom:12}}>
+          <div style={{fontSize:11,color:C.muted,letterSpacing:2,marginBottom:10}}>ADD EXERCISE</div>
+          <input value={name} onChange={e=>setName(e.target.value)} placeholder="Exercise name" style={{display:"block",width:"100%",background:C.surface,border:`1px solid ${C.border}`,borderRadius:8,color:C.text,padding:"10px 12px",marginBottom:8,fontFamily:"inherit",fontSize:14,boxSizing:"border-box"}}/>
+          <input value={detail} onChange={e=>setDetail(e.target.value)} placeholder="Sets × reps, duration..." style={{display:"block",width:"100%",background:C.surface,border:`1px solid ${C.border}`,borderRadius:8,color:C.text,padding:"10px 12px",marginBottom:8,fontFamily:"inherit",fontSize:14,boxSizing:"border-box"}}/>
+          <button onClick={add} style={{background:"none",border:`1px solid ${C.orange}`,borderRadius:8,color:C.orange,padding:"8px 16px",fontFamily:"'Bebas Neue',sans-serif",fontSize:15,letterSpacing:2,cursor:"pointer"}}>+ ADD</button>
+        </div>
+      )}
+      <BigBtn onClick={onFinish} color={allDone?C.teal:C.orange}>{allDone?"✓ LOG WORKOUT":"FINISH & LOG"}</BigBtn>
+      <div style={{height:8}}/>
+    </div>
+  );
+}
+
+// ============================================================
+// LOG VIEW
+// ============================================================
+function LogView({data}){
+  const now=new Date();
+  const weeks=Array.from({length:8},(_,i)=>{const s=new Date(now);s.setDate(now.getDate()-now.getDay()-(7-i-1)*7);s.setHours(0,0,0,0);const e=new Date(s);e.setDate(s.getDate()+7);return{label:s.toLocaleDateString("en-US",{month:"short",day:"numeric"}),cnt:data.workouts.filter(w=>{const d=new Date(w.date);return d>=s&&d<e;}).length};});
+  const maxCnt=Math.max(...weeks.map(w=>w.cnt),WEEKLY_GOAL);
+  return(
+    <div style={{padding:"0 16px"}}>
+      <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:28,letterSpacing:3,padding:"20px 0 16px"}}>TRAINING LOG</div>
+      <div style={{background:C.card,borderRadius:14,padding:"16px",marginBottom:12}}>
+        <div style={{fontSize:10,color:C.muted,letterSpacing:2,marginBottom:16}}>WORKOUTS / WEEK — LAST 8 WEEKS</div>
+        <div style={{position:"relative"}}>
+          <div style={{position:"absolute",top:`${100-(WEEKLY_GOAL/maxCnt)*100}%`,left:0,right:0,borderTop:`1px dashed ${C.orange}44`,zIndex:1}}/>
+          <div style={{display:"flex",alignItems:"flex-end",height:80,gap:4}}>
+            {weeks.map((w,i)=>(<div key={i} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center"}}><div style={{fontSize:9,color:w.cnt?C.text:"transparent",marginBottom:2}}>{w.cnt}</div><div style={{width:"100%",background:i===7?C.orange:(w.cnt>=WEEKLY_GOAL?C.teal+"88":"#2A2A2A"),borderRadius:"3px 3px 0 0",height:`${Math.max((w.cnt/maxCnt)*60,w.cnt?4:0)}px`}}/></div>))}
+          </div>
+        </div>
+      </div>
+      <div style={{fontSize:10,color:C.muted,letterSpacing:2,marginBottom:8}}>RECENT WORKOUTS</div>
+      {data.workouts.length===0?(<div style={{background:C.card,borderRadius:14,padding:"40px 20px",textAlign:"center",color:C.muted}}><div style={{fontSize:36,marginBottom:8}}>📋</div>No workouts yet. Get after it.</div>):[...data.workouts].reverse().slice(0,25).map((w,i)=>(
+        <div key={w.id||i} style={{background:C.card,borderRadius:12,padding:"14px 16px",marginBottom:8,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <div><div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:18,letterSpacing:1,marginBottom:4}}>{w.name}</div><div style={{display:"flex",gap:8,alignItems:"center"}}><TypeBadge type={w.type}/><span style={{fontSize:11,color:C.muted}}>{new Date(w.date).toLocaleDateString("en-US",{weekday:"short",month:"short",day:"numeric"})} · {w.duration}m</span></div></div>
+          <div style={{textAlign:"right"}}><div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:22,color:C.gold}}>+{w.xp}</div><div style={{fontSize:9,color:C.muted}}>XP</div></div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ============================================================
+// RANK VIEW
+// ============================================================
+function RankView({data}){
+  const {n,name,next,prog}=getLevelInfo(data.totalXP);
+  const unlocked=data.achievements||[];
+  return(
+    <div style={{padding:"0 16px"}}>
+      <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:28,letterSpacing:3,padding:"20px 0 16px"}}>RANK & ACHIEVEMENTS</div>
+      <div style={{background:"#1A0D00",borderRadius:14,padding:"20px",marginBottom:12,border:`1px solid ${C.gold}44`}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+          <div><div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:56,color:C.gold,lineHeight:1}}>LVL {n}</div><div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:22,letterSpacing:3}}>{name}</div></div>
+          <div style={{textAlign:"right"}}><div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:36,color:C.gold}}>{data.totalXP}</div><div style={{fontSize:10,color:C.muted,letterSpacing:1}}>TOTAL XP</div></div>
+        </div>
+        <XPBar prog={prog} color={C.gold}/>
+        {next?<div style={{fontSize:11,color:C.muted,marginTop:6}}>{next.min-data.totalXP} XP to {next.name}</div>:<div style={{fontSize:12,color:C.gold,fontStyle:"italic",marginTop:6}}>Maximum rank unlocked.</div>}
+      </div>
+      <div style={{fontSize:10,color:C.muted,letterSpacing:2,marginBottom:10}}>ACHIEVEMENTS — {unlocked.length} / {ACHIEVEMENTS.length}</div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+        {ACHIEVEMENTS.map(a=>{const on=unlocked.includes(a.id);return(
+          <div key={a.id} style={{background:C.card,borderRadius:12,padding:"14px",border:`1px solid ${on?C.gold+"44":C.border}`,opacity:on?1:0.35}}>
+            <div style={{fontSize:26,marginBottom:6}}>{on?a.icon:"🔒"}</div>
+            <div style={{fontWeight:700,fontSize:13,marginBottom:2}}>{a.name}</div>
+            <div style={{fontSize:11,color:C.muted,marginBottom:on?4:0}}>{a.desc}</div>
+            {on&&<div style={{fontSize:11,color:C.gold,fontWeight:700}}>+{a.xp} XP</div>}
+          </div>
+        );})}
+      </div>
+      <div style={{height:8}}/>
+    </div>
+  );
+}
+
+// ============================================================
+// ROOT APP
+// ============================================================
+function App(){
+  const [authState,setAuthState]=useState("loading"); // loading | signedin | signedout
+  const [authError,setAuthError]=useState("");
+  const [signInLoading,setSignInLoading]=useState(false);
+  const [appData,setAppData]=useState(null);
+  const [dataLoading,setDataLoading]=useState(false);
+  const [tab,setTab]=useState("home");
+  const [popup,setPopup]=useState(null);
+  const [showSchedule,setShowSchedule]=useState(false);
+  const [doneResult,setDoneResult]=useState(null);
+  const [userEmail,setUserEmail]=useState("");
+  const [saveIndicator,setSaveIndicator]=useState(false);
+
+  // Init MSAL + handle redirect
+  useEffect(()=>{
+    (async()=>{
+      try {
+        const result = await msal.handleRedirectPromise();
+        const accounts = msal.getAllAccounts();
+        if(accounts.length > 0){
+          setUserEmail(accounts[0].username || "");
+          setAuthState("signedin");
+        } else {
+          setAuthState("signedout");
+        }
+      } catch(e) {
+        setAuthError("Sign in failed. Please try again.");
+        setAuthState("signedout");
+      }
+    })();
+  },[]);
+
+  // Load data from OneDrive when signed in
+  useEffect(()=>{
+    if(authState!=="signedin") return;
+    (async()=>{
+      setDataLoading(true);
+      const d = await loadFromOneDrive();
+      setAppData(d);
+      setDataLoading(false);
+    })();
+  },[authState]);
+
+  const signIn = async () => {
+    setSignInLoading(true);
+    setAuthError("");
+    try {
+      await msal.loginRedirect({ scopes: SCOPES });
+    } catch(e) {
+      setAuthError("Sign in failed. Please try again.");
+      setSignInLoading(false);
+    }
+  };
+
+  const mergeAndSave = useCallback(patch => {
+    setAppData(prev => {
+      if(!prev) return prev;
+      const next = { ...prev, ...patch };
+      setSaveIndicator(true);
+      saveToOneDrive(next).finally(() => setTimeout(() => setSaveIndicator(false), 2000));
+      return next;
+    });
+  }, []);
+
+  const handleComplete = useCallback(result => {
+    setAppData(prev => {
+      if(!prev) return prev;
+      const workouts = [...prev.workouts, result];
+      let xp = (prev.totalXP || 0) + result.xp;
+      const achievements = [...(prev.achievements || [])];
+      const candidate = { ...prev, workouts, totalXP: xp, achievements };
+      let firstNew = null;
+      for(const a of ACHIEVEMENTS){
+        if(!achievements.includes(a.id) && a.check(candidate)){
+          achievements.push(a.id); xp += a.xp;
+          if(!firstNew) firstNew = a;
+        }
+      }
+      const next = { ...prev, workouts, totalXP: xp, achievements };
+      saveToOneDrive(next);
+      if(firstNew) setPopup(firstNew);
+      return next;
+    });
+    setDoneResult(result);
+    setTab("done");
+  }, []);
+
+  // Loading / auth screens
+  if(authState === "loading") return (
+    <div style={{background:C.bg,minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center"}}>
+      <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:28,color:C.orange,letterSpacing:5}}>LOADING...</div>
+    </div>
+  );
+  if(authState === "signedout") return <SignInScreen onSignIn={signIn} loading={signInLoading} error={authError}/>;
+  if(dataLoading || !appData) return (
+    <div style={{background:C.bg,minHeight:"100vh",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:12}}>
+      <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:28,color:C.orange,letterSpacing:5}}>LOADING DATA...</div>
+      <div style={{fontSize:12,color:C.muted}}>Fetching from OneDrive</div>
+    </div>
+  );
+
+  const tabs=[{id:"home",icon:"⌂",label:"HOME"},{id:"train",icon:"⚡",label:"TRAIN"},{id:"body",icon:"◈",label:"BODY"},{id:"log",icon:"◎",label:"LOG"},{id:"rank",icon:"★",label:"RANK"}];
+
+  return (
+    <div style={{background:C.bg,height:"100vh",height:"100dvh",color:C.text,fontFamily:"'Rajdhani',sans-serif",maxWidth:430,margin:"0 auto",display:"flex",flexDirection:"column",position:"relative",overflow:"hidden"}}>
+
+      {/* Save indicator */}
+      {saveIndicator && (
+        <div style={{position:"fixed",top:12,right:12,background:C.teal+"22",border:`1px solid ${C.teal}44`,borderRadius:8,padding:"4px 10px",fontSize:10,color:C.teal,zIndex:500,letterSpacing:1}}>SAVED TO ONEDRIVE</div>
+      )}
+
+      {/* Achievement popup */}
+      {popup&&(
+        <div style={{position:"fixed",top:16,left:"50%",transform:"translateX(-50%)",background:"#1A1200",border:`2px solid ${C.gold}`,borderRadius:14,padding:"16px 24px",zIndex:1000,textAlign:"center",minWidth:280,boxShadow:`0 0 50px ${C.gold}33`}}>
+          <div style={{fontSize:36,marginBottom:4}}>{popup.icon}</div>
+          <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:12,color:C.gold,letterSpacing:3,marginBottom:4}}>ACHIEVEMENT UNLOCKED</div>
+          <div style={{fontWeight:700,fontSize:16,marginBottom:2}}>{popup.name}</div>
+          <div style={{fontSize:12,color:C.muted,marginBottom:10}}>{popup.desc} · +{popup.xp} XP</div>
+          <button onClick={()=>setPopup(null)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:11,letterSpacing:1}}>DISMISS</button>
+        </div>
+      )}
+
+      {showSchedule&&<ScheduleModal data={appData} onSave={mergeAndSave} onClose={()=>setShowSchedule(false)}/>}
+
+      {/* Main scroll area */}
+      <div style={{flex:1,overflowY:"auto",WebkitOverflowScrolling:"touch",paddingBottom:70}}>
+        {tab==="done"&&doneResult&&(
+          <div style={{padding:"0 16px",textAlign:"center"}}>
+            <div style={{marginTop:52,fontSize:64,marginBottom:10}}>💪</div>
+            <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:52,color:C.orange,letterSpacing:6,marginBottom:8}}>LOGGED.</div>
+            <div style={{fontSize:15,color:C.muted,fontStyle:"italic",marginBottom:8,lineHeight:1.6}}>Permanent. Saved to OneDrive. Can't un-do it.</div>
+            <div style={{fontSize:12,color:C.teal,marginBottom:32,letterSpacing:1}}>✓ SYNCED TO ONEDRIVE</div>
+            <div style={{background:C.card,borderRadius:14,padding:"20px",display:"flex",justifyContent:"space-around",marginBottom:24}}>
+              <div><div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:44,color:C.gold}}>{doneResult.xp}</div><div style={{fontSize:10,color:C.muted,letterSpacing:1}}>XP EARNED</div></div>
+              <div style={{width:1,background:C.border}}/>
+              <div><div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:44,color:C.orange}}>{doneResult.duration}</div><div style={{fontSize:10,color:C.muted,letterSpacing:1}}>MINUTES</div></div>
+            </div>
+            <BigBtn onClick={()=>{setTab("home");setDoneResult(null);}}>BACK TO DASHBOARD</BigBtn>
+            <div style={{height:8}}/>
+            <button onClick={()=>{setTab("body");setDoneResult(null);}} style={{width:"100%",background:"none",border:`1px solid ${C.border}`,borderRadius:14,padding:"13px",fontFamily:"'Bebas Neue',sans-serif",fontSize:16,letterSpacing:2,color:C.muted,cursor:"pointer",marginBottom:16}}>LOG WEIGHT / SLEEP / WATER</button>
+          </div>
+        )}
+        {tab==="home"  && <HomeView  data={appData} onStart={()=>setTab("train")} onSchedule={()=>setShowSchedule(true)} userEmail={userEmail}/>}
+        {tab==="train" && <TrainFlow onComplete={handleComplete} onBack={()=>setTab("home")}/>}
+        {tab==="body"  && <BodyView  data={appData} onSave={mergeAndSave}/>}
+        {tab==="log"   && <LogView   data={appData}/>}
+        {tab==="rank"  && <RankView  data={appData}/>}
+      </div>
+
+      {/* Bottom nav */}
+      <div style={{position:"absolute",bottom:0,left:0,right:0,background:"#0F0F0F",borderTop:`1px solid ${C.border}`,display:"flex",zIndex:50,paddingBottom:"env(safe-area-inset-bottom)"}}>
+        {tabs.map(t=>(
+          <button key={t.id} onClick={()=>setTab(t.id)} style={{flex:1,background:"none",border:"none",padding:"10px 0 8px",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:2,position:"relative"}}>
+            <div style={{fontSize:18,opacity:tab===t.id?1:0.3,transition:"opacity 0.2s"}}>{t.icon}</div>
+            <div style={{fontSize:9,color:tab===t.id?C.orange:C.muted,fontWeight:700,letterSpacing:2,transition:"color 0.2s"}}>{t.label}</div>
+            {tab===t.id&&<div style={{position:"absolute",top:0,left:"50%",transform:"translateX(-50%)",width:24,height:2,background:C.orange,borderRadius:"0 0 2px 2px"}}/>}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// Mount
+const root = ReactDOM.createRoot(document.getElementById("root"));
+root.render(<App/>);
+
+// Register service worker
+if("serviceWorker" in navigator){
+  window.addEventListener("load", ()=>{
+    navigator.serviceWorker.register("sw.js").catch(()=>{});
+  });
+}
+  </script>
+</body>
+</html>

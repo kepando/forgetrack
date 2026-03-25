@@ -1,0 +1,19 @@
+{
+  "name": "ForgeTrack",
+  "short_name": "ForgeTrack",
+  "description": "Ken's personal fitness tracker",
+  "start_url": "/forgetrack/",
+  "scope": "/forgetrack/",
+  "display": "standalone",
+  "background_color": "#0B0B0B",
+  "theme_color": "#FF5200",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
