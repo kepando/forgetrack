@@ -100,14 +100,10 @@ async function graphFetch(url, opts = {}) {
 // ONEDRIVE STORAGE
 // ============================================================
 async function loadFromOneDrive() {
-  try {
-    const res = await graphFetch(DATA_PATH, { headers: { "Content-Type": undefined } });
-    if (res.status === 404) return { ...DEFAULT_DATA };
-    if (!res.ok) throw new Error("Load failed");
-    return res.json();
-  } catch {
-    return { ...DEFAULT_DATA };
-  }
+  const res = await graphFetch(DATA_PATH, { headers: { "Content-Type": undefined } });
+  if (res.status === 404) return { ...DEFAULT_DATA };
+  if (!res.ok) throw new Error(`OneDrive load failed (${res.status})`);
+  return res.json();
 }
 
 let saveTimer = null;
@@ -121,8 +117,8 @@ function saveToOneDrive(data) {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(data),
         });
-      } catch (e) { console.warn("Save failed:", e); }
-      resolve();
+        resolve(true);
+      } catch (e) { console.warn("Save failed:", e); resolve(false); }
     }, 1500);
   });
 }
@@ -881,7 +877,9 @@ function App(){
   const [showSchedule,setShowSchedule]=useState(false);
   const [doneResult,setDoneResult]=useState(null);
   const [userEmail,setUserEmail]=useState("");
-  const [saveIndicator,setSaveIndicator]=useState(false);
+  const [saveIndicator,setSaveIndicator]=useState(null); // null | "saving" | "saved" | "error"
+  const [syncError,setSyncError]=useState("");
+  const [loadKey,setLoadKey]=useState(0);
 
   // Init MSAL + check for existing session
   useEffect(()=>{
@@ -907,11 +905,17 @@ function App(){
     if(authState!=="signedin") return;
     (async()=>{
       setDataLoading(true);
-      const d = await loadFromOneDrive();
-      setAppData(d);
+      setSyncError("");
+      try {
+        const d = await loadFromOneDrive();
+        setAppData(d);
+      } catch(e) {
+        setSyncError(e.message || "Failed to load from OneDrive");
+        setAppData(prev => prev || { ...DEFAULT_DATA });
+      }
       setDataLoading(false);
     })();
-  },[authState]);
+  },[authState, loadKey]);
 
   const signIn = async () => {
     setSignInLoading(true);
@@ -936,8 +940,11 @@ function App(){
     setAppData(prev => {
       if(!prev) return prev;
       const next = { ...prev, ...patch };
-      setSaveIndicator(true);
-      saveToOneDrive(next).finally(() => setTimeout(() => setSaveIndicator(false), 2000));
+      setSaveIndicator("saving");
+      saveToOneDrive(next).then(ok => {
+        setSaveIndicator(ok ? "saved" : "error");
+        setTimeout(() => setSaveIndicator(null), 2500);
+      });
       return next;
     });
   }, []);
@@ -957,7 +964,11 @@ function App(){
         }
       }
       const next = { ...prev, workouts, totalXP: xp, achievements };
-      saveToOneDrive(next);
+      setSaveIndicator("saving");
+      saveToOneDrive(next).then(ok => {
+        setSaveIndicator(ok ? "saved" : "error");
+        setTimeout(() => setSaveIndicator(null), 2500);
+      });
       if(firstNew) setPopup(firstNew);
       return next;
     });
@@ -986,7 +997,18 @@ function App(){
 
       {/* Save indicator */}
       {saveIndicator && (
-        <div style={{position:"fixed",top:12,right:12,background:C.teal+"22",border:`1px solid ${C.teal}44`,borderRadius:8,padding:"4px 10px",fontSize:10,color:C.teal,zIndex:500,letterSpacing:1}}>SAVED TO ONEDRIVE</div>
+        <div style={{position:"fixed",top:12,right:12,background:saveIndicator==="error"?C.red+"22":C.teal+"22",border:`1px solid ${saveIndicator==="error"?C.red:C.teal}44`,borderRadius:8,padding:"4px 10px",fontSize:10,color:saveIndicator==="error"?C.red:C.teal,zIndex:500,letterSpacing:1}}>
+          {saveIndicator==="saving"?"SAVING...":saveIndicator==="error"?"SAVE FAILED":"SAVED ✓"}
+        </div>
+      )}
+
+      {/* Sync error banner */}
+      {syncError && (
+        <div style={{position:"fixed",top:0,left:0,right:0,background:"#2A0000",borderBottom:`1px solid ${C.red}44`,padding:"10px 16px",zIndex:600,display:"flex",alignItems:"center",justifyContent:"space-between",gap:8}}>
+          <div style={{fontSize:11,color:C.red,flex:1}}>SYNC ERROR: {syncError}</div>
+          <button onClick={()=>setLoadKey(k=>k+1)} style={{background:C.red,border:"none",borderRadius:6,padding:"4px 10px",fontSize:10,color:"#fff",cursor:"pointer",letterSpacing:1,whiteSpace:"nowrap"}}>RETRY</button>
+          <button onClick={()=>setSyncError("")} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:16,lineHeight:1,padding:"0 4px"}}>×</button>
+        </div>
       )}
 
       {/* Achievement popup */}
