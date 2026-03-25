@@ -889,7 +889,7 @@ function App(){
           setAuthState("signedout");
         }
       } catch(e) {
-        setAuthError("Sign in failed. Please try again.");
+        setAuthError("Auth error: " + (e.message || e.errorCode || String(e)));
         setAuthState("signedout");
       }
     })();
@@ -910,10 +910,24 @@ function App(){
     setSignInLoading(true);
     setAuthError("");
     try {
-      await getMsalApp().loginRedirect({ scopes: SCOPES });
-    } catch(e) {
-      setAuthError("Sign in failed. Please try again.");
-      setSignInLoading(false);
+      const result = await getMsalApp().loginPopup({ scopes: SCOPES });
+      if (result && result.account) {
+        setUserEmail(result.account.username || "");
+        setAuthState("signedin");
+      }
+    } catch(popupErr) {
+      const code = popupErr.errorCode || "";
+      if (code.includes("popup") || code.includes("window") || code.includes("blocked")) {
+        try {
+          await getMsalApp().loginRedirect({ scopes: SCOPES });
+        } catch(redirectErr) {
+          setAuthError("Error: " + (redirectErr.message || redirectErr.errorCode || String(redirectErr)));
+          setSignInLoading(false);
+        }
+      } else {
+        setAuthError("Error: " + (popupErr.message || popupErr.errorCode || String(popupErr)));
+        setSignInLoading(false);
+      }
     }
   };
 
