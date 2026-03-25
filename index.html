@@ -880,7 +880,15 @@ function App(){
   useEffect(()=>{
     (async()=>{
       try {
-        const result = await getMsalApp().handleRedirectPromise();
+        // handleRedirectPromise processes the auth redirect if one is in progress.
+        // On a cold load (no redirect) it returns null — that is normal, not an error.
+        await getMsalApp().handleRedirectPromise();
+      } catch(e) {
+        // Redirect processing failed — show error but still let user try again
+        console.warn("Redirect error:", e);
+      }
+      // Check accounts regardless of whether a redirect just happened
+      try {
         const accounts = getMsalApp().getAllAccounts();
         if(accounts.length > 0){
           setUserEmail(accounts[0].username || "");
@@ -889,7 +897,7 @@ function App(){
           setAuthState("signedout");
         }
       } catch(e) {
-        setAuthError("Auth error: " + (e.message || e.errorCode || String(e)));
+        setAuthError("Init error: " + (e.message || String(e)));
         setAuthState("signedout");
       }
     })();
@@ -906,29 +914,15 @@ function App(){
     })();
   },[authState]);
 
-  const signIn = async () => {
+  const signIn = () => {
     setSignInLoading(true);
     setAuthError("");
-    try {
-      const result = await getMsalApp().loginPopup({ scopes: SCOPES });
-      if (result && result.account) {
-        setUserEmail(result.account.username || "");
-        setAuthState("signedin");
-      }
-    } catch(popupErr) {
-      const code = popupErr.errorCode || "";
-      if (code.includes("popup") || code.includes("window") || code.includes("blocked")) {
-        try {
-          await getMsalApp().loginRedirect({ scopes: SCOPES });
-        } catch(redirectErr) {
-          setAuthError("Error: " + (redirectErr.message || redirectErr.errorCode || String(redirectErr)));
-          setSignInLoading(false);
-        }
-      } else {
-        setAuthError("Error: " + (popupErr.message || popupErr.errorCode || String(popupErr)));
-        setSignInLoading(false);
-      }
-    }
+    // loginRedirect is the most reliable auth flow on iOS Safari PWA.
+    // It navigates away and back — handleRedirectPromise() above catches the return.
+    getMsalApp().loginRedirect({ scopes: SCOPES }).catch(e => {
+      setAuthError("Error: " + (e.message || e.errorCode || String(e)));
+      setSignInLoading(false);
+    });
   };
 
   const mergeAndSave = useCallback(patch => {
