@@ -64,16 +64,23 @@ const msalConfig = {
   cache: { cacheLocation: "localStorage", storeAuthStateInCookie: true },
 };
 
-const msalApp = new window.msal.PublicClientApplication(msalConfig);
+let _msalApp = null;
+function getMsalApp() {
+  if (!_msalApp) {
+    _msalApp = new window.msal.PublicClientApplication(msalConfig);
+  }
+  return _msalApp;
+}
 
 async function getToken() {
-  const accounts = msalApp.getAllAccounts();
+  const app = getMsalApp();
+  const accounts = app.getAllAccounts();
   if (!accounts.length) throw new Error("Not signed in");
   try {
-    const r = await msalApp.acquireTokenSilent({ scopes: SCOPES, account: accounts[0] });
+    const r = await app.acquireTokenSilent({ scopes: SCOPES, account: accounts[0] });
     return r.accessToken;
   } catch {
-    await msalApp.acquireTokenRedirect({ scopes: SCOPES });
+    await app.acquireTokenRedirect({ scopes: SCOPES });
   }
 }
 
@@ -873,8 +880,8 @@ function App(){
   useEffect(()=>{
     (async()=>{
       try {
-        const result = await msalApp.handleRedirectPromise();
-        const accounts = msalApp.getAllAccounts();
+        const result = await getMsalApp().handleRedirectPromise();
+        const accounts = getMsalApp().getAllAccounts();
         if(accounts.length > 0){
           setUserEmail(accounts[0].username || "");
           setAuthState("signedin");
@@ -903,7 +910,7 @@ function App(){
     setSignInLoading(true);
     setAuthError("");
     try {
-      await msalApp.loginRedirect({ scopes: SCOPES });
+      await getMsalApp().loginRedirect({ scopes: SCOPES });
     } catch(e) {
       setAuthError("Sign in failed. Please try again.");
       setSignInLoading(false);
