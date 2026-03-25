@@ -19,7 +19,8 @@
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     html, body { background: #0B0B0B; height: 100%; overflow: hidden; -webkit-tap-highlight-color: transparent; }
-    #root { height: 100vh; height: 100dvh; overflow: hidden; }
+    #root { height: 100vh; overflow: hidden; }
+    #crash { display:none; position:fixed; inset:0; background:#0B0B0B; color:#FF5200; font-family:monospace; padding:24px; font-size:13px; z-index:9999; white-space:pre-wrap; overflow:auto; }
     ::-webkit-scrollbar { display: none; }
     input[type=number] { -moz-appearance: textfield; }
     input[type=number]::-webkit-outer-spin-button,
@@ -30,6 +31,19 @@
 </head>
 <body>
   <div id="root"></div>
+  <div id="crash"></div>
+  <script>
+    window.onerror = function(msg, src, line, col, err) {
+      var el = document.getElementById('crash');
+      el.style.display = 'block';
+      el.textContent = 'ForgeTrack Error:\n\n' + msg + '\n\nSource: ' + src + '\nLine: ' + line + '\n\n' + (err && err.stack ? err.stack : '');
+    };
+    window.addEventListener('unhandledrejection', function(e) {
+      var el = document.getElementById('crash');
+      el.style.display = 'block';
+      el.textContent = (el.textContent || '') + '\n\nUnhandled Promise:\n' + (e.reason && e.reason.stack ? e.reason.stack : e.reason);
+    });
+  </script>
   <script type="text/babel" data-presets="react">
 
 // ============================================================
@@ -50,16 +64,16 @@ const msalConfig = {
   cache: { cacheLocation: "localStorage", storeAuthStateInCookie: true },
 };
 
-const msal = new msal.PublicClientApplication(msalConfig);
+const msalApp = new window.msal.PublicClientApplication(msalConfig);
 
 async function getToken() {
-  const accounts = msal.getAllAccounts();
+  const accounts = msalApp.getAllAccounts();
   if (!accounts.length) throw new Error("Not signed in");
   try {
-    const r = await msal.acquireTokenSilent({ scopes: SCOPES, account: accounts[0] });
+    const r = await msalApp.acquireTokenSilent({ scopes: SCOPES, account: accounts[0] });
     return r.accessToken;
   } catch {
-    await msal.acquireTokenRedirect({ scopes: SCOPES });
+    await msalApp.acquireTokenRedirect({ scopes: SCOPES });
   }
 }
 
@@ -859,8 +873,8 @@ function App(){
   useEffect(()=>{
     (async()=>{
       try {
-        const result = await msal.handleRedirectPromise();
-        const accounts = msal.getAllAccounts();
+        const result = await msalApp.handleRedirectPromise();
+        const accounts = msalApp.getAllAccounts();
         if(accounts.length > 0){
           setUserEmail(accounts[0].username || "");
           setAuthState("signedin");
@@ -889,7 +903,7 @@ function App(){
     setSignInLoading(true);
     setAuthError("");
     try {
-      await msal.loginRedirect({ scopes: SCOPES });
+      await msalApp.loginRedirect({ scopes: SCOPES });
     } catch(e) {
       setAuthError("Sign in failed. Please try again.");
       setSignInLoading(false);
@@ -946,7 +960,7 @@ function App(){
   const tabs=[{id:"home",icon:"⌂",label:"HOME"},{id:"train",icon:"⚡",label:"TRAIN"},{id:"body",icon:"◈",label:"BODY"},{id:"log",icon:"◎",label:"LOG"},{id:"rank",icon:"★",label:"RANK"}];
 
   return (
-    <div style={{background:C.bg,height:"100vh",height:"100dvh",color:C.text,fontFamily:"'Rajdhani',sans-serif",maxWidth:430,margin:"0 auto",display:"flex",flexDirection:"column",position:"relative",overflow:"hidden"}}>
+    <div style={{background:C.bg,height:"100vh",color:C.text,fontFamily:"'Rajdhani',sans-serif",maxWidth:430,margin:"0 auto",display:"flex",flexDirection:"column",position:"relative",overflow:"hidden"}}>
 
       {/* Save indicator */}
       {saveIndicator && (
