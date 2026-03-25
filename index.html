@@ -65,22 +65,26 @@ const msalConfig = {
 };
 
 let _msalApp = null;
-function getMsalApp() {
+let _msalInitPromise = null;
+async function getMsalApp() {
   if (!_msalApp) {
     _msalApp = new window.msal.PublicClientApplication(msalConfig);
+    _msalInitPromise = _msalApp.initialize();
   }
+  await _msalInitPromise;
   return _msalApp;
 }
 
 async function getToken() {
-  const app = getMsalApp();
+  const app = await getMsalApp();
   const accounts = app.getAllAccounts();
   if (!accounts.length) throw new Error("Not signed in");
   try {
     const r = await app.acquireTokenSilent({ scopes: SCOPES, account: accounts[0] });
     return r.accessToken;
   } catch {
-    await app.acquireTokenRedirect({ scopes: SCOPES });
+    const r = await app.acquireTokenPopup({ scopes: SCOPES, account: accounts[0] });
+    return r.accessToken;
   }
 }
 
@@ -107,17 +111,20 @@ async function loadFromOneDrive() {
 }
 
 let saveTimer = null;
-async function saveToOneDrive(data) {
+function saveToOneDrive(data) {
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(async () => {
-    try {
-      await graphFetch(DATA_PATH, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(data),
-      });
-    } catch (e) { console.warn("Save failed:", e); }
-  }, 1500);
+  return new Promise(resolve => {
+    saveTimer = setTimeout(async () => {
+      try {
+        await graphFetch(DATA_PATH, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(data),
+        });
+      } catch (e) { console.warn("Save failed:", e); }
+      resolve();
+    }, 1500);
+  });
 }
 
 // ============================================================
@@ -876,20 +883,12 @@ function App(){
   const [userEmail,setUserEmail]=useState("");
   const [saveIndicator,setSaveIndicator]=useState(false);
 
-  // Init MSAL + handle redirect
+  // Init MSAL + check for existing session
   useEffect(()=>{
     (async()=>{
       try {
-        // handleRedirectPromise processes the auth redirect if one is in progress.
-        // On a cold load (no redirect) it returns null — that is normal, not an error.
-        await getMsalApp().handleRedirectPromise();
-      } catch(e) {
-        // Redirect processing failed — show error but still let user try again
-        console.warn("Redirect error:", e);
-      }
-      // Check accounts regardless of whether a redirect just happened
-      try {
-        const accounts = getMsalApp().getAllAccounts();
+        const app = await getMsalApp();
+        const accounts = app.getAllAccounts();
         if(accounts.length > 0){
           setUserEmail(accounts[0].username || "");
           setAuthState("signedin");
@@ -914,15 +913,23 @@ function App(){
     })();
   },[authState]);
 
-  const signIn = () => {
+  const signIn = async () => {
     setSignInLoading(true);
     setAuthError("");
-    // loginRedirect is the most reliable auth flow on iOS Safari PWA.
-    // It navigates away and back — handleRedirectPromise() above catches the return.
-    getMsalApp().loginRedirect({ scopes: SCOPES }).catch(e => {
+    try {
+      const app = await getMsalApp();
+      // loginPopup works in iOS Safari and PWA standalone mode.
+      // loginRedirect breaks PWAs — the return URL opens in Safari, not the PWA.
+      const result = await app.loginPopup({ scopes: SCOPES });
+      if(result && result.account){
+        setUserEmail(result.account.username || "");
+        setAuthState("signedin");
+      }
+    } catch(e) {
       setAuthError("Error: " + (e.message || e.errorCode || String(e)));
+    } finally {
       setSignInLoading(false);
-    });
+    }
   };
 
   const mergeAndSave = useCallback(patch => {
