@@ -104,7 +104,7 @@ async function graphFetch(url, opts = {}) {
 // ============================================================
 async function loadFromOneDrive() {
   const res = await graphFetch(DATA_PATH);
-  if (res.status === 404) return { ...DEFAULT_DATA };
+  if (res.status === 404) return null; // no file yet — caller preserves existing state
   if (!res.ok) {
     const body = await res.text().catch(() => "");
     const detail = body ? ` — ${body.slice(0, 120)}` : "";
@@ -916,10 +916,14 @@ function App(){
       setSyncError("");
       try {
         const d = await loadFromOneDrive();
-        setAppData(d);
+        if (d !== null) {
+          setAppData(d); // real data from OneDrive — use it
+        } else {
+          setAppData(prev => prev || { ...DEFAULT_DATA }); // no file yet — preserve in-memory data
+        }
       } catch(e) {
         setSyncError(e.message || "Failed to load from OneDrive");
-        setAppData(prev => prev || { ...DEFAULT_DATA });
+        setAppData(prev => prev || { ...DEFAULT_DATA }); // load error — preserve in-memory data
       }
       setDataLoading(false);
     })();
