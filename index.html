@@ -50,7 +50,6 @@
 // MSAL / AUTH CONFIG
 // ============================================================
 const CLIENT_ID  = "36e274f3-5442-426e-a11a-c434233498b9";
-const TENANT_ID  = "a354f297-017d-4682-9285-77f29c7336db";
 const SCOPES     = ["User.Read", "Calendars.ReadWrite", "Files.ReadWrite.All"];
 const GRAPH_ROOT = "https://graph.microsoft.com/v1.0";
 const DATA_PATH  = `${GRAPH_ROOT}/me/drive/root:/forgetrack-data.json:/content`;
@@ -58,7 +57,7 @@ const DATA_PATH  = `${GRAPH_ROOT}/me/drive/root:/forgetrack-data.json:/content`;
 const msalConfig = {
   auth: {
     clientId: CLIENT_ID,
-    authority: `https://login.microsoftonline.com/${TENANT_ID}`,
+    authority: "https://login.microsoftonline.com/common",
     redirectUri: window.location.origin + window.location.pathname.replace(/\/$/, "") + "/",
   },
   cache: { cacheLocation: "localStorage", storeAuthStateInCookie: true },

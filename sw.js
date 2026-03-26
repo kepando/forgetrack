@@ -1,4 +1,4 @@
-const CACHE = "forgetrack-v7";
+const CACHE = "forgetrack-v8";
 const ASSETS = [
   "/forgetrack/",
   "/forgetrack/index.html",
