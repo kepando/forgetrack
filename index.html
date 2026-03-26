@@ -254,17 +254,32 @@ const DEFAULT_DATA = {
 // ============================================================
 const { useState, useEffect, useCallback, useMemo, useRef } = React;
 
+// Parse a stored date string as LOCAL midnight, regardless of whether it's
+// a full ISO timestamp (legacy) or a YYYY-MM-DD date-only string (new).
+function parseLocalDate(dateStr) {
+  if(!dateStr) return new Date(NaN);
+  if(dateStr.length === 10) {
+    const [y,m,d] = dateStr.split('-').map(Number);
+    return new Date(y, m-1, d);
+  }
+  const d = new Date(dateStr);
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+}
+// Return today's date as YYYY-MM-DD in the device's LOCAL timezone.
+function localDateStr(d=new Date()){
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
 function getStreak(w) {
   if(!w.length) return 0;
   const today=new Date(); today.setHours(0,0,0,0);
-  const days=new Set(w.map(x=>{const d=new Date(x.date);d.setHours(0,0,0,0);return d.getTime();}));
+  const days=new Set(w.map(x=>{const d=parseLocalDate(x.date);d.setHours(0,0,0,0);return d.getTime();}));
   const tryFrom=s=>{let n=0,d=new Date(s);while(days.has(d.getTime())){n++;d.setDate(d.getDate()-1);}return n;};
   const s=tryFrom(today); if(s>0) return s;
   const yest=new Date(today); yest.setDate(yest.getDate()-1); return tryFrom(yest);
 }
 function getWeekCount(w) {
   const s=new Date(); s.setDate(s.getDate()-s.getDay()); s.setHours(0,0,0,0);
-  return w.filter(x=>new Date(x.date)>=s).length;
+  return w.filter(x=>parseLocalDate(x.date)>=s).length;
 }
 function getLevelInfo(xp) {
   let curr=LEVELS[0]; for(const l of LEVELS){if(xp>=l.min)curr=l;}
@@ -280,9 +295,9 @@ function bmiCategory(bmi){
   if(b<30)return{label:"Overweight",col:C.gold};
   return{label:"Obese",col:C.red};
 }
-function todayStr(){return new Date().toISOString().split("T")[0];}
+function todayStr(){return localDateStr();}
 function countWaterGoalDays(log=[]){
-  const m={};for(const e of log){const d=e.date.split("T")[0];m[d]=(m[d]||0)+e.glasses;}
+  const m={};for(const e of log){const d=localDateStr(parseLocalDate(e.date));m[d]=(m[d]||0)+e.glasses;}
   return Object.values(m).filter(v=>v>=WATER_GOAL).length;
 }
 function countGoodSleepDays(log=[]){return log.filter(e=>e.hours>=7).length;}
@@ -485,7 +500,7 @@ function WeightSection({data,onSave}){
   const {label,col}=bmi?bmiCategory(bmi):{label:"--",col:C.muted};
   const doLog=()=>{
     const w=parseFloat(weight); if(isNaN(w)||w<50||w>500)return;
-    onSave({weightLog:[...log,{date:new Date().toISOString(),weight:w}],heightIn:parseInt(height)||69});
+    onSave({weightLog:[...log,{date:localDateStr(),weight:w}],heightIn:parseInt(height)||69});
     setWeight("");
   };
   const chart=log.slice(-20);
@@ -541,7 +556,7 @@ function SleepSection({data,onSave}){
   const log=data.sleepLog||[];
   const recent=log.slice(-7);
   const avg=recent.length?(recent.reduce((s,e)=>s+e.hours,0)/recent.length).toFixed(1):null;
-  const doLog=()=>{const h=parseFloat(hours);if(isNaN(h)||h<0||h>24)return;onSave({sleepLog:[...log,{date:new Date().toISOString(),hours:h,quality}]});setHours("");setQuality(3);};
+  const doLog=()=>{const h=parseFloat(hours);if(isNaN(h)||h<0||h>24)return;onSave({sleepLog:[...log,{date:localDateStr(),hours:h,quality}]});setHours("");setQuality(3);};
   return(
     <div>
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:12}}>
@@ -573,7 +588,7 @@ function SleepSection({data,onSave}){
 function WaterSection({data,onSave}){
   const log=data.waterLog||[];
   const todayG=log.filter(e=>e.date.startsWith(todayStr())).reduce((s,e)=>s+e.glasses,0);
-  const add=n=>{onSave({waterLog:[...log,{date:new Date().toISOString(),glasses:n}]});};
+  const add=n=>{onSave({waterLog:[...log,{date:localDateStr(),glasses:n}]});};
   return(
     <div>
       <div style={{background:C.card,borderRadius:14,padding:"20px 16px",marginBottom:12,textAlign:"center"}}>
@@ -590,7 +605,7 @@ function WaterSection({data,onSave}){
         <button onClick={()=>add(2)} style={{flex:1,background:"none",border:`1px solid ${C.blue}`,borderRadius:12,padding:"14px",fontFamily:"'Bebas Neue',sans-serif",fontSize:18,letterSpacing:2,color:C.blue,cursor:"pointer"}}>+ 2 GLASSES</button>
       </div>
       <div style={{fontSize:10,color:C.muted,letterSpacing:2,marginBottom:8}}>RECENT DAYS</div>
-      {Array.from({length:7}).map((_,i)=>{const d=new Date();d.setDate(d.getDate()-i);const ds=d.toISOString().split("T")[0];const g=log.filter(e=>e.date.startsWith(ds)).reduce((s,e)=>s+e.glasses,0);return(
+      {Array.from({length:7}).map((_,i)=>{const d=new Date();d.setDate(d.getDate()-i);const ds=localDateStr(d);const g=log.filter(e=>localDateStr(parseLocalDate(e.date))===ds).reduce((s,e)=>s+e.glasses,0);return(
         <div key={i} style={{background:C.card,borderRadius:10,padding:"10px 16px",marginBottom:6,display:"flex",alignItems:"center",gap:10}}>
           <div style={{fontSize:12,color:C.muted,width:88}}>{i===0?"Today":d.toLocaleDateString("en-US",{weekday:"short",month:"short",day:"numeric"})}</div>
           <div style={{flex:1,height:8,background:"#2A2A2A",borderRadius:99,overflow:"hidden"}}><div style={{width:`${Math.min(100,(g/WATER_GOAL)*100)}%`,height:"100%",background:g>=WATER_GOAL?C.teal:C.blue,borderRadius:99}}/></div>
@@ -746,7 +761,7 @@ function ActiveWorkout({workout,win,energy,onDone,onBack}){
   useEffect(()=>{const id=setInterval(()=>setElapsed(Math.floor((Date.now()-start)/1000)),1000);return()=>clearInterval(id);},[start]);
   const finish=useCallback(()=>{
     const dur=Math.max(Math.round(elapsed/60),1);
-    onDone({id:Date.now().toString(),date:new Date().toISOString(),timeWindow:win,workoutId:workout?.id||"freestyle",name:workout?.name||"Freestyle Workout",type:workout?.type||"freestyle",energyLevel:energy,duration:dur,xp:workout?.xp||100});
+    onDone({id:Date.now().toString(),date:localDateStr(),timeWindow:win,workoutId:workout?.id||"freestyle",name:workout?.name||"Freestyle Workout",type:workout?.type||"freestyle",energyLevel:energy,duration:dur,xp:workout?.xp||100});
   },[elapsed,win,workout,energy,onDone]);
   if(workout?.isHIIT)return <HIITTimer workout={workout} elapsed={elapsed} onFinish={finish} onBack={onBack}/>;
   return <ExerciseList workout={workout} elapsed={elapsed} onFinish={finish} onBack={onBack}/>;
@@ -816,7 +831,7 @@ function ExerciseList({workout,elapsed,onFinish,onBack}){
 // ============================================================
 function LogView({data}){
   const now=new Date();
-  const weeks=Array.from({length:8},(_,i)=>{const s=new Date(now);s.setDate(now.getDate()-now.getDay()-(7-i-1)*7);s.setHours(0,0,0,0);const e=new Date(s);e.setDate(s.getDate()+7);return{label:s.toLocaleDateString("en-US",{month:"short",day:"numeric"}),cnt:data.workouts.filter(w=>{const d=new Date(w.date);return d>=s&&d<e;}).length};});
+  const weeks=Array.from({length:8},(_,i)=>{const s=new Date(now);s.setDate(now.getDate()-now.getDay()-(7-i-1)*7);s.setHours(0,0,0,0);const e=new Date(s);e.setDate(s.getDate()+7);return{label:s.toLocaleDateString("en-US",{month:"short",day:"numeric"}),cnt:data.workouts.filter(w=>{const d=parseLocalDate(w.date);return d>=s&&d<e;}).length};});
   const maxCnt=Math.max(...weeks.map(w=>w.cnt),WEEKLY_GOAL);
   return(
     <div style={{padding:"0 16px"}}>
