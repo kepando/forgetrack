@@ -539,10 +539,10 @@ function WeightSection({data,onSave}){
           <div style={{fontSize:12,color:C.muted}}>in</div>
         </div>
       </div>
-      {[...log].reverse().slice(0,10).map((e,i)=>{const b=calcBMI(e.weight,data.heightIn||69);const {col:bc}=bmiCategory(b);return(
-        <div key={i} style={{background:C.card,borderRadius:10,padding:"12px 16px",marginBottom:6,display:"flex",justifyContent:"space-between"}}>
-          <div style={{fontSize:13,color:C.muted}}>{new Date(e.date).toLocaleDateString("en-US",{weekday:"short",month:"short",day:"numeric"})}</div>
-          <div style={{display:"flex",gap:12}}><span style={{fontWeight:700}}>{e.weight} lbs</span><span style={{color:bc,fontSize:12}}>BMI {b}</span></div>
+      {[...log].reverse().slice(0,10).map((e,i)=>{const actualIdx=log.length-1-i;const b=calcBMI(e.weight,data.heightIn||69);const {col:bc}=bmiCategory(b);return(
+        <div key={i} style={{background:C.card,borderRadius:10,padding:"12px 16px",marginBottom:6,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <div style={{fontSize:13,color:C.muted}}>{parseLocalDate(e.date).toLocaleDateString("en-US",{weekday:"short",month:"short",day:"numeric"})}</div>
+          <div style={{display:"flex",gap:12,alignItems:"center"}}><span style={{fontWeight:700}}>{e.weight} lbs</span><span style={{color:bc,fontSize:12}}>BMI {b}</span><button onClick={()=>onSave({weightLog:log.filter((_,j)=>j!==actualIdx)})} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:16,lineHeight:1,padding:"0 0 0 4px"}}>×</button></div>
         </div>
       );})}
       <div style={{height:8}}/>
@@ -574,10 +574,10 @@ function SleepSection({data,onSave}){
           {[1,2,3,4,5].map(n=><button key={n} onClick={()=>setQuality(n)} style={{flex:1,background:quality===n?C.purple:"none",border:`1px solid ${quality===n?C.purple:C.border}`,borderRadius:8,padding:"8px 4px",fontFamily:"'Bebas Neue',sans-serif",fontSize:16,color:quality===n?"#fff":C.muted,cursor:"pointer"}}>{n}</button>)}
         </div>
       </div>
-      {[...log].reverse().slice(0,8).map((e,i)=>{const qc=e.quality>=4?C.teal:e.quality<=2?C.red:C.gold;return(
+      {[...log].reverse().slice(0,8).map((e,i)=>{const actualIdx=log.length-1-i;const qc=e.quality>=4?C.teal:e.quality<=2?C.red:C.gold;return(
         <div key={i} style={{background:C.card,borderRadius:10,padding:"12px 16px",marginBottom:6,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-          <div style={{fontSize:13,color:C.muted}}>{new Date(e.date).toLocaleDateString("en-US",{weekday:"short",month:"short",day:"numeric"})}</div>
-          <div style={{display:"flex",gap:12,alignItems:"center"}}><span style={{fontWeight:700,color:e.hours>=7?C.teal:C.gold}}>{e.hours}h</span><span style={{fontSize:12,color:qc}}>Q {e.quality}/5</span></div>
+          <div style={{fontSize:13,color:C.muted}}>{parseLocalDate(e.date).toLocaleDateString("en-US",{weekday:"short",month:"short",day:"numeric"})}</div>
+          <div style={{display:"flex",gap:12,alignItems:"center"}}><span style={{fontWeight:700,color:e.hours>=7?C.teal:C.gold}}>{e.hours}h</span><span style={{fontSize:12,color:qc}}>Q {e.quality}/5</span><button onClick={()=>onSave({sleepLog:log.filter((_,j)=>j!==actualIdx)})} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:16,lineHeight:1,padding:"0 0 0 4px"}}>×</button></div>
         </div>
       );})}
       <div style={{height:8}}/>
@@ -589,6 +589,12 @@ function WaterSection({data,onSave}){
   const log=data.waterLog||[];
   const todayG=log.filter(e=>e.date.startsWith(todayStr())).reduce((s,e)=>s+e.glasses,0);
   const add=n=>{onSave({waterLog:[...log,{date:localDateStr(),glasses:n}]});};
+  const removeLast=()=>{
+    const idx=log.map((e,i)=>({e,i})).filter(({e})=>localDateStr(parseLocalDate(e.date))===todayStr());
+    if(!idx.length) return;
+    const last=idx[idx.length-1].i;
+    onSave({waterLog:log.filter((_,i)=>i!==last)});
+  };
   return(
     <div>
       <div style={{background:C.card,borderRadius:14,padding:"20px 16px",marginBottom:12,textAlign:"center"}}>
@@ -598,7 +604,7 @@ function WaterSection({data,onSave}){
         {todayG>=WATER_GOAL&&<div style={{fontSize:12,color:C.teal,fontWeight:700,letterSpacing:2,marginTop:8}}>GOAL REACHED ✓</div>}
       </div>
       <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:8,marginBottom:12}}>
-        {Array.from({length:WATER_GOAL}).map((_,i)=>{const filled=i<todayG;return <button key={i} onClick={filled?null:()=>add(1)} style={{background:filled?C.blue+"33":"none",border:`2px solid ${filled?C.blue:C.border}`,borderRadius:12,padding:"16px 0",cursor:filled?"default":"pointer",fontSize:24}}>{filled?"🥤":"⬜"}</button>;})}
+        {Array.from({length:WATER_GOAL}).map((_,i)=>{const filled=i<todayG;return <button key={i} onClick={filled?removeLast:()=>add(1)} style={{background:filled?C.blue+"33":"none",border:`2px solid ${filled?C.blue:C.border}`,borderRadius:12,padding:"16px 0",cursor:"pointer",fontSize:24}}>{filled?"🥤":"⬜"}</button>;})}
       </div>
       <div style={{display:"flex",gap:8,marginBottom:16}}>
         <button onClick={()=>add(1)} style={{flex:1,background:C.blue,border:"none",borderRadius:12,padding:"14px",fontFamily:"'Bebas Neue',sans-serif",fontSize:18,letterSpacing:3,color:"#fff",cursor:"pointer"}}>+ 1 GLASS</button>
