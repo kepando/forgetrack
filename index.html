@@ -912,6 +912,20 @@ function App(){
   const [saveIndicator,setSaveIndicator]=useState(null); // null | "saving" | "saved" | "error"
   const [syncError,setSyncError]=useState("");
   const [loadKey,setLoadKey]=useState(0);
+  const [pullY,setPullY]=useState(0);
+  const scrollRef=useRef(null);
+  const touchStartY=useRef(0);
+  const PULL_THRESHOLD=65;
+  const onPullStart=e=>{if((scrollRef.current?.scrollTop||0)===0)touchStartY.current=e.touches[0].clientY;};
+  const onPullMove=e=>{
+    if((scrollRef.current?.scrollTop||0)>0){touchStartY.current=e.touches[0].clientY;return;}
+    const dy=e.touches[0].clientY-touchStartY.current;
+    if(dy>0)setPullY(Math.min(dy*0.5,PULL_THRESHOLD+16));
+  };
+  const onPullEnd=()=>{
+    if(pullY>=PULL_THRESHOLD)setLoadKey(k=>k+1);
+    setPullY(0);
+  };
 
   // Init MSAL + check for existing session
   useEffect(()=>{
@@ -1079,7 +1093,8 @@ function App(){
       {showSchedule&&<ScheduleModal data={appData} onSave={mergeAndSave} onClose={()=>setShowSchedule(false)}/>}
 
       {/* Main scroll area */}
-      <div style={{flex:1,overflowY:"auto",WebkitOverflowScrolling:"touch",paddingBottom:70}}>
+      <div ref={scrollRef} onTouchStart={onPullStart} onTouchMove={onPullMove} onTouchEnd={onPullEnd} style={{flex:1,overflowY:"auto",WebkitOverflowScrolling:"touch",paddingBottom:70,overscrollBehavior:"none"}}>
+        {pullY>0&&<div style={{height:pullY,display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden",transition:pullY<4?"height 0.25s ease":"none"}}><div style={{fontSize:10,letterSpacing:2,fontWeight:700,color:pullY>=PULL_THRESHOLD?C.teal:C.muted}}>{pullY>=PULL_THRESHOLD?"RELEASE TO REFRESH":"PULL TO REFRESH"}</div></div>}
         {tab==="done"&&doneResult&&(
           <div style={{padding:"0 16px",textAlign:"center"}}>
             <div style={{marginTop:52,fontSize:64,marginBottom:10}}>💪</div>
