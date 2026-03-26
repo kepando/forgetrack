@@ -587,7 +587,7 @@ function SleepSection({data,onSave}){
 
 function WaterSection({data,onSave}){
   const log=data.waterLog||[];
-  const todayG=log.filter(e=>e.date.startsWith(todayStr())).reduce((s,e)=>s+e.glasses,0);
+  const todayG=log.filter(e=>localDateStr(parseLocalDate(e.date))===todayStr()).reduce((s,e)=>s+e.glasses,0);
   const add=n=>{onSave({waterLog:[...log,{date:localDateStr(),glasses:n}]});};
   const removeLast=()=>{
     const idx=log.map((e,i)=>({e,i})).filter(({e})=>localDateStr(parseLocalDate(e.date))===todayStr());
@@ -1119,7 +1119,7 @@ function App(){
       </div>
 
       {/* Bottom nav */}
-      <div style={{position:"absolute",bottom:0,left:0,right:0,background:"#0F0F0F",borderTop:`1px solid ${C.border}`,display:"flex",zIndex:50,paddingBottom:"env(safe-area-inset-bottom)",paddingLeft:"env(safe-area-inset-left)",paddingRight:"env(safe-area-inset-right)"}}>
+      <div style={{position:"absolute",bottom:0,left:0,right:0,background:"#0F0F0F",borderTop:`1px solid ${C.border}`,display:"flex",zIndex:50,paddingBottom:"env(safe-area-inset-bottom)",paddingLeft:"max(16px, env(safe-area-inset-left))",paddingRight:"max(16px, env(safe-area-inset-right))"}}>
         {tabs.map(t=>(
           <button key={t.id} onClick={()=>setTab(t.id)} style={{flex:1,background:"none",border:"none",padding:"10px 0 8px",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:2,position:"relative"}}>
             <div style={{fontSize:18,opacity:tab===t.id?1:0.3,transition:"opacity 0.2s"}}>{t.icon}</div>
