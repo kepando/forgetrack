@@ -347,7 +347,7 @@ function SignInScreen({onSignIn, loading, error}) {
 // ============================================================
 // HOME VIEW
 // ============================================================
-function HomeView({data, onStart, onSchedule, userEmail}) {
+function HomeView({data, onStart, onSchedule, userEmail, onSignOut}) {
   const week=getWeekCount(data.workouts);
   const streak=getStreak(data.workouts);
   const {n:lvl,name:lvlName,next:nextLvl,prog:lvlProg}=getLevelInfo(data.totalXP);
@@ -447,7 +447,10 @@ function HomeView({data, onStart, onSchedule, userEmail}) {
       <button onClick={onSchedule} style={{width:"100%",background:"none",border:`1px solid ${C.border}`,borderRadius:14,padding:"13px",fontFamily:"'Bebas Neue',sans-serif",fontSize:16,letterSpacing:3,color:C.muted,cursor:"pointer",marginBottom:4}}>
         📅 SCHEDULE & OUTLOOK CALENDAR
       </button>
-      <div style={{textAlign:"center",fontSize:10,color:"#333",paddingBottom:4}}>{userEmail}</div>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:10,paddingBottom:4}}>
+        <div style={{fontSize:10,color:"#444"}}>{userEmail}</div>
+        <button onClick={onSignOut} style={{background:"none",border:"none",fontSize:10,color:C.muted,cursor:"pointer",letterSpacing:1,padding:"2px 0",textDecoration:"underline"}}>SIGN OUT</button>
+      </div>
     </div>
   );
 }
@@ -947,6 +950,18 @@ function App(){
     }
   };
 
+  const signOut = async () => {
+    try {
+      const app = await getMsalApp();
+      await app.logoutPopup();
+    } catch(e) {
+      console.warn("Logout error:", e);
+    }
+    setAppData(null);
+    setUserEmail("");
+    setAuthState("signedout");
+  };
+
   const mergeAndSave = useCallback(patch => {
     setAppData(prev => {
       if(!prev) return prev;
@@ -1053,7 +1068,7 @@ function App(){
             <button onClick={()=>{setTab("body");setDoneResult(null);}} style={{width:"100%",background:"none",border:`1px solid ${C.border}`,borderRadius:14,padding:"13px",fontFamily:"'Bebas Neue',sans-serif",fontSize:16,letterSpacing:2,color:C.muted,cursor:"pointer",marginBottom:16}}>LOG WEIGHT / SLEEP / WATER</button>
           </div>
         )}
-        {tab==="home"  && <HomeView  data={appData} onStart={()=>setTab("train")} onSchedule={()=>setShowSchedule(true)} userEmail={userEmail}/>}
+        {tab==="home"  && <HomeView  data={appData} onStart={()=>setTab("train")} onSchedule={()=>setShowSchedule(true)} userEmail={userEmail} onSignOut={signOut}/>}
         {tab==="train" && <TrainFlow onComplete={handleComplete} onBack={()=>setTab("home")}/>}
         {tab==="body"  && <BodyView  data={appData} onSave={mergeAndSave}/>}
         {tab==="log"   && <LogView   data={appData}/>}
