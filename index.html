@@ -57,7 +57,7 @@ const DATA_PATH  = `${GRAPH_ROOT}/me/drive/root:/forgetrack-data.json:/content`;
 const msalConfig = {
   auth: {
     clientId: CLIENT_ID,
-    authority: "https://login.microsoftonline.com/common",
+    authority: "https://login.microsoftonline.com/consumers",
     redirectUri: window.location.origin + window.location.pathname.replace(/\/$/, "") + "/",
   },
   cache: { cacheLocation: "localStorage", storeAuthStateInCookie: true },
@@ -77,13 +77,14 @@ async function getMsalApp() {
 async function getToken() {
   const app = await getMsalApp();
   const accounts = app.getAllAccounts();
-  if (!accounts.length) throw new Error("Not signed in");
+  if (!accounts.length) throw Object.assign(new Error("Not signed in"), { needsLogin: true });
   try {
     const r = await app.acquireTokenSilent({ scopes: SCOPES, account: accounts[0] });
     return r.accessToken;
   } catch {
-    const r = await app.acquireTokenPopup({ scopes: SCOPES, account: accounts[0] });
-    return r.accessToken;
+    // Silent refresh failed — signal the app to send the user back to sign-in.
+    // Do NOT fall back to popup here: iOS PWA blocks popups without a user gesture.
+    throw Object.assign(new Error("Session expired — please sign in again"), { needsLogin: true });
   }
 }
 
@@ -924,8 +925,14 @@ function App(){
           setAppData(prev => prev || { ...DEFAULT_DATA }); // no file yet — preserve in-memory data
         }
       } catch(e) {
-        setSyncError(e.message || "Failed to load from OneDrive");
-        setAppData(prev => prev || { ...DEFAULT_DATA }); // load error — preserve in-memory data
+        if (e.needsLogin) {
+          // Token expired or missing — send back to sign-in screen cleanly
+          setAuthState("signedout");
+          setAuthError("Session expired. Please sign in again.");
+        } else {
+          setSyncError(e.message || "Failed to load from OneDrive");
+          setAppData(prev => prev || { ...DEFAULT_DATA });
+        }
       }
       setDataLoading(false);
     })();
