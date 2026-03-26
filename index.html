@@ -53,7 +53,7 @@ const CLIENT_ID  = "36e274f3-5442-426e-a11a-c434233498b9";
 const TENANT_ID  = "a354f297-017d-4682-9285-77f29c7336db";
 const SCOPES     = ["User.Read", "Calendars.ReadWrite", "Files.ReadWrite.All"];
 const GRAPH_ROOT = "https://graph.microsoft.com/v1.0";
-const DATA_PATH  = `${GRAPH_ROOT}/me/drive/root:/ForgeTrack/forgetrack-data.json:/content`;
+const DATA_PATH  = `${GRAPH_ROOT}/me/drive/root:/forgetrack-data.json:/content`;
 
 const msalConfig = {
   auth: {
@@ -105,7 +105,11 @@ async function graphFetch(url, opts = {}) {
 async function loadFromOneDrive() {
   const res = await graphFetch(DATA_PATH);
   if (res.status === 404) return { ...DEFAULT_DATA };
-  if (!res.ok) throw new Error(`OneDrive load failed (${res.status})`);
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    const detail = body ? ` — ${body.slice(0, 120)}` : "";
+    throw new Error(`Load failed (${res.status})${detail}`);
+  }
   return res.json();
 }
 
@@ -115,11 +119,12 @@ function saveToOneDrive(data) {
   return new Promise(resolve => {
     saveTimer = setTimeout(async () => {
       try {
-        await graphFetch(DATA_PATH, {
+        const res = await graphFetch(DATA_PATH, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(data),
         });
+        if (!res.ok) throw new Error(`Save failed (${res.status})`);
         resolve(true);
       } catch (e) { console.warn("Save failed:", e); resolve(false); }
     }, 1500);
