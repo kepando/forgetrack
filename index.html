@@ -268,6 +268,11 @@ const EXERCISE_INFO = {
 
 function ExerciseInfoModal({name, onClose}){
   const info=EXERCISE_INFO[name];
+  useEffect(()=>{
+    const el=document.getElementById("main-scroll");
+    if(el){el.style.overflowY="hidden";}
+    return()=>{if(el){el.style.overflowY="auto";}};
+  },[]);
   return(
     <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:300,display:"flex",alignItems:"flex-end"}}>
       <div onClick={e=>e.stopPropagation()} style={{background:C.surface,borderRadius:"20px 20px 0 0",width:"100%",maxHeight:"82vh",overflowY:"auto",WebkitOverflowScrolling:"touch",paddingBottom:"calc(env(safe-area-inset-bottom) + 24px)"}}>
@@ -1236,7 +1241,7 @@ function App(){
       {showSchedule&&<ScheduleModal data={appData} onSave={mergeAndSave} onClose={()=>setShowSchedule(false)}/>}
 
       {/* Main scroll area */}
-      <div ref={scrollRef} onTouchStart={onPullStart} onTouchMove={onPullMove} onTouchEnd={onPullEnd} style={{flex:1,overflowY:"auto",WebkitOverflowScrolling:"touch",paddingBottom:110,overscrollBehavior:"none"}}>
+      <div id="main-scroll" ref={scrollRef} onTouchStart={onPullStart} onTouchMove={onPullMove} onTouchEnd={onPullEnd} style={{flex:1,overflowY:"auto",WebkitOverflowScrolling:"touch",paddingBottom:110,overscrollBehavior:"none"}}>
         {pullY>0&&<div style={{height:pullY,display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden",transition:pullY<4?"height 0.25s ease":"none"}}><div style={{fontSize:10,letterSpacing:2,fontWeight:700,color:pullY>=PULL_THRESHOLD?C.teal:C.muted}}>{pullY>=PULL_THRESHOLD?"RELEASE TO REFRESH":"PULL TO REFRESH"}</div></div>}
         {tab==="done"&&doneResult&&(
           <div style={{padding:"0 16px",textAlign:"center"}}>
