@@ -268,12 +268,7 @@ const EXERCISE_INFO = {
 
 function ExerciseInfoModal({name, onClose}){
   const info=EXERCISE_INFO[name];
-  useEffect(()=>{
-    const el=document.getElementById("main-scroll");
-    if(el){el.style.overflowY="hidden";}
-    return()=>{if(el){el.style.overflowY="auto";}};
-  },[]);
-  return(
+  return ReactDOM.createPortal(
     <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:300,display:"flex",alignItems:"flex-end"}}>
       <div onClick={e=>e.stopPropagation()} style={{background:C.surface,borderRadius:"20px 20px 0 0",width:"100%",maxHeight:"82vh",overflowY:"auto",WebkitOverflowScrolling:"touch",paddingBottom:"calc(env(safe-area-inset-bottom) + 24px)"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"20px 20px 4px"}}>
@@ -307,7 +302,8 @@ function ExerciseInfoModal({name, onClose}){
           <div style={{textAlign:"center",color:C.muted,fontSize:14,padding:"24px 20px"}}>No guide available for this exercise yet.</div>
         )}
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 
@@ -332,8 +328,8 @@ const LEVELS = [
 ];
 
 const STEPS_GOAL = 10000;
-const LAST_UPDATED = "03/27/2026 10:02 PM PT";
-const APP_VERSION = "v22";
+const LAST_UPDATED = "03/27/2026 10:40 PM PT";
+const APP_VERSION = "v24";
 const DEFAULT_DATA = {
   workouts:[], achievements:[], totalXP:0, heightIn:69,
   weightLog:[], sleepLog:[], waterLog:[], stepsLog:[],
