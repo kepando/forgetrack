@@ -327,6 +327,7 @@ const LEVELS = [
 ];
 
 const STEPS_GOAL = 10000;
+const LAST_UPDATED = "03/27/2026 9:17 PM PT";
 const DEFAULT_DATA = {
   workouts:[], achievements:[], totalXP:0, heightIn:69,
   weightLog:[], sleepLog:[], waterLog:[], stepsLog:[],
@@ -553,10 +554,11 @@ function HomeView({data, onStart, onSchedule, userEmail, onSignOut}) {
       <button onClick={onSchedule} style={{width:"100%",background:"none",border:`1px solid ${C.border}`,borderRadius:14,padding:"13px",fontFamily:"'Bebas Neue',sans-serif",fontSize:16,letterSpacing:3,color:C.muted,cursor:"pointer",marginBottom:4}}>
         📅 SCHEDULE & OUTLOOK CALENDAR
       </button>
-      <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:10,paddingBottom:4}}>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:10,paddingBottom:2}}>
         <div style={{fontSize:10,color:"#444"}}>{userEmail}</div>
         <button onClick={onSignOut} style={{background:"none",border:"none",fontSize:10,color:C.muted,cursor:"pointer",letterSpacing:1,padding:"2px 0",textDecoration:"underline"}}>SIGN OUT</button>
       </div>
+      <div style={{textAlign:"center",fontSize:9,color:"#333",paddingBottom:6,letterSpacing:1}}>Last updated: {LAST_UPDATED}</div>
     </div>
   );
 }
